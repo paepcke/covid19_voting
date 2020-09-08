@@ -49,15 +49,13 @@ class StatePredictor(object):
         
         # Join voter turnout and search frequencies 
         # into one wide table:
-        features = voter_turnout.merge(search_features, 
-                                       left_on='State Abv', 
-                                       right_on='State', 
-                                       how='inner')
+        
+        features = self.merge_turnout_query_counts(voter_turnout, search_features)
 
         # Get values in column that we are to predict:
-        y = search_features[label_col]
+        y = features[label_col]
         # Remove that col from features:
-        X = search_features.drop(columns=label_col)
+        X = features.drop(columns=label_col)
 
         rand_forest = RandomForestClassifier()
         rand_forest.fit(X,y)
@@ -352,7 +350,42 @@ class StatePredictor(object):
                 voter_turnout_df = voter_turnout_df.append(df.copy())
         
         return voter_turnout_df
+
+
+    #------------------------------------
+    # merge_turnout_query_counts
+    #-------------------
+
+    def merge_turnout_query_counts(self, voter_turnout, search_features):
+        '''
+        Given a voter turnout dataframe, and a df containing
+        search query counts, merge the two (i.e. add columns
+        of one to the other), and return the result.
         
+        @param voter_turnout: dataframe of all voter turnout data
+        @type voter_turnout: pd.DataFrame
+        @param search_features: dataframe of all voting related search query counts
+            by state and election year
+        @type search_features: pd.DataFrame
+        @return a wider df, containing information from
+            both inputs
+        @rtype pd.DataFrame
+        '''
+        
+        features = voter_turnout.merge(search_features, 
+                                       left_on='State Abv', 
+                                       right_on='State', 
+                                       how='inner')
+        
+        # Rename/remove columns introduced by
+        # the merge where column name ambiguities
+        # existed:
+        
+        features = features.drop(labels='State_y', axis='columns')
+        features = features.rename(columns={'State_x' : 'State'})
+        
+        return features
+
 # ------------------------ Utilities ----------
 
     def state_abbrev_series(self, state_name_series):
