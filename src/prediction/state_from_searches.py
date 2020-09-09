@@ -4,15 +4,12 @@ Created on Sep 4, 2020
 @author: paepcke
 '''
 
-import argparse
 import os
-import sys
 import csv
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-
 
 class StatePredictor(object):
     '''
@@ -25,12 +22,20 @@ class StatePredictor(object):
                            2016: os.path.join(os.path.dirname(__file__),
                                             '../../data/turnoutRates2016NovemberGeneralElection.xlsx')
                            }
+    
+    QUERY_TERM_FILES    = {2008: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_vote_2008.csv'),
+                           2012: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_vote_2012.csv'),
+                           2016: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_vote_2016.csv')
+                          }
 
     #------------------------------------
     # Constructor 
     #-------------------
 
-    def __init__(self, csv_file, label_col='State'):
+    def __init__(self, label_col='State'):
         '''
         Constructor
         '''
@@ -45,17 +50,23 @@ class StatePredictor(object):
         voter_turnout = self.import_voter_turnout(self.VOTER_TURNOUT_FILES)
 
         # Import csv file with Google query statistics:
-        search_features = self.import_search_data(csv_file)
+        search_features = self.import_search_data(self.QUERY_TERM_FILES)
         
         # Join voter turnout and search frequencies 
         # into one wide table:
         
-        features = self.merge_turnout_query_counts(voter_turnout, search_features)
+        election_features = self.merge_turnout_query_counts(voter_turnout, search_features)
+        
+        # Add a column for where disaster was
+        # happening at election time:
+        
+        election_features = self.add_disaster_information(election_features) 
+        
 
         # Get values in column that we are to predict:
-        y = features[label_col]
-        # Remove that col from features:
-        X = features.drop(columns=label_col)
+        y = election_features[label_col]
+        # Remove that col from election_features:
+        X = election_features.drop(columns=label_col)
 
         rand_forest = RandomForestClassifier()
         rand_forest.fit(X,y)
@@ -65,7 +76,7 @@ class StatePredictor(object):
     # import_search_data 
     #-------------------
     
-    def import_search_data(self, csv_file):
+    def import_search_data(self, search_data_dict):
         '''
         Read CSV file, and return a tuple,
         (x,Y). Value x is a dataframe containing
@@ -79,13 +90,13 @@ class StatePredictor(object):
              case, but could be voter turnout)
              
              Example rows:
-                 76,100,92,54,71,69,46,0     < week3 before election State 0
-                 76,57,67,85,100,96,99,0     < week2 before election State 0
-                 43,60,52,100,73,80,47,0     < week1 before election State 0
-                 100,67,0,61,42,33,84,1      < week3 before election State 1
-                 0,47,100,55,56,46,50,1      < week2 before election State 1
-                 44,42,65,49,100,42,81,1     < week1 before election State 1
-                 61,42,77,100,79,44,91,2                   ...       State 2
+                 76,100,92,54,71,69,46,0,2008,vote     < week3 before election State 0
+                 76,57,67,85,100,96,99,0,2008,vote     < week2 before election State 0
+                 43,60,52,100,73,80,47,0,2008,vote     < week1 before election State 0
+                 100,67,0,61,42,33,84,1,2008,vote      < week3 before election State 1
+                 0,47,100,55,56,46,50,1,2008,vote      < week2 before election State 1
+                 44,42,65,49,100,42,81,1,2008,vote     < week1 before election State 1
+                 61,42,77,100,79,44,91,2,2008,vote                   ...       State 2
 
            o Consecutive rows are for weeks before election.
              Example: if data contains two weeks for each 
@@ -95,15 +106,41 @@ class StatePredictor(object):
              
         Returns a dataframe, where '*' is the sum of searches 
         over all States on that day:
-                State week  Mon   Tue  Wed  Thu  Fri  Sat  Sun 
-           ...    AL    0   76  100   92   54   71   69   46
-                  AL    1   76   57   67   85  100   96   99
-                  AL    2   43   60   52  100   73   80   47
-                  AK    0  100   67    0   61   42   33   84
+                State Query  Week  Mon   Tue  Wed  Thu  Fri  Sat  Sun 
+           ...    AL   vote        0   76  100   92   54   71   69   46
+                  AL   vote   1   76   57   67   85  100   96   99
+                  AL   vote       2   43   60   52  100   73   80   47
+                  AK   vote   0  100   67    0   61   42   33   84
                     ...
                   US    0    *   *    *    *    *    *    * 
                   US    1    *   *    *    *    *    *    * 
                   US    2    *   *    *    *    *    *    *
+
+        In addition, a multiindex ('Region', 'Election') is installed,
+        allowing selections such as:
+        
+        Ex1:   select all Wyoming data for the 2016 election:
+           
+            search_query_df.xs(['WY',2016])
+            ==> Region Election                                                           
+                WY     2016        WY  2016  vote     0   49    0    0  100   58   93   45
+                       2016        WY  2016  vote     1   80    0   58   68   61  100    0
+                       2016        WY  2016  vote     2  100    0    0   63    0   47   45
+                       2016        WY  2016  vote     0   49    0    0  100   58   93   45
+                       2016        WY  2016  vote     1   80    0   58   68   61  100    0
+                       2016        WY  2016  vote     2  100    0    0   63    0   47   45
+                       2016        WY  2016  vote     0   49    0    0  100   58   93   45
+                       2016        WY  2016  vote     1   80    0   58   68   61  100    0
+                       2016        WY  2016  vote     2  100    0    0   63    0   47   45
+
+        Ex2.   select all vote counts of week 0
+            search_query_df[search_query_df.Week == 0]
+            ==> Region Election                                ...                              
+                AL     2008        AL  2008  vote     0    46  ...    58    56    27    75   100
+                AK     2008        AK  2008  vote     0     0  ...    81   100     0    76    74
+                AZ     2008        AZ  2008  vote     0    91  ...    86    60    52    72    57
+                AR     2008        AR  2008  vote     0     0  ...    90    96     0   100    67
+                
 
         @param csv_file: comma separated data file 
         @type csv_file: str
@@ -112,85 +149,89 @@ class StatePredictor(object):
             Final column is state abbrev
         @rtype: (pd.DataFrame, pd.Series)
         '''
-        df = pd.read_csv(csv_file,
-                         names=['Mon','Tue','Wed','Thu','Fri','Sat','Sun','State'],
-                         index_col=False, # 1st col is *not* an index col
-                         )
-        
-        # Add a column that indexes the week before
-        # the election that one row represents.
-        # A few steps needed:
-        
-        # How many weeks of data for each State?
-        # Take State 0 (any will do), and could how
-        # often it occurs in the State column:
-        
-        num_weeks  = len(df[df.State == 0])
 
-        # How many States are in the data? Find
-        # by counting unique values in the States
-        # column: 
-        num_states = len(df.groupby('State').nunique())
-        
-        # Create as many [0,1,2,...] as there
-        # are States. Ex:
-        #   0, ... Alabama 
-        #   1, ... Alabama 
-        #   2, ... Alabama                 
-        #   0, ... California
-        #   1, ... California 
-        #   2, ... California
-        # ...
-        
-        week_indices = list(range(num_weeks)) * num_states 
-        
-        # Finally: add '0/1/2/0,1,2/...' as first col
-
-        df.insert(0,'week',week_indices)
-        
-        # Replace the State codes (0,1,2...) with
-        # the State abbreviations:
-        
-        df = df.replace(to_replace={'State': self.state_codings})
-
-        # Build a row for each week that is
-        # the some of all queries on one day
-        # across all States:
-        #
-        #    week   Mon                     Tue
-        #      0  sum(of Mondays of wk0)    sum(of Tuesdays of wk0)    ...
-        #      1  sum(of Mondays of wk1)    sum(of Tuesdays of wk0)    ...
-        
-        df_final = df.copy()
-        for wk in range(num_weeks):
-            that_wk_only = df[df['week'] == wk]
+        search_query_df = None
+        for year in search_data_dict.keys():
             
-            # Now sum all the cols (
-            wk_summed = that_wk_only.sum(axis=0, numeric_only=True)
-
-            # Now have something like:
-            #     df.sum(axis=0, numeric_only=True)
-            #     week      153
-            #     Mon     10595
-            #     Tue     10208
-            #     Wed     10529
-            #     Thu     11095
-            #     Fri     10942
-            #     Sat     10368
-            #     Sun     10673
-            #     dtype: int64
+            csv_file = search_data_dict[year]
+            df = pd.read_csv(csv_file,
+                             names=['Mon','Tue','Wed','Thu','Fri','Sat','Sun',
+                                    'State','Year', 'Query'],
+                             index_col=False, # 1st col is *not* an index col
+                             )
+            
+            # Add a column that indexes the week before
+            # the election that one row represents.
+            # A few steps needed:
+            
+            # How many weeks of data for each State?
+            # Take State 0 (any will do), and could how
+            # often it occurs in the State column:
+            
+            num_weeks  = len(df[df.State == 0])
+    
+            # How many States are in the data? Find
+            # by counting unique values in the States
+            # column: 
+            num_states = len(df.groupby('State').nunique())
+            
+            # Create as many [0,1,2,...] as there
+            # are States. Ex:
+            #   0, ... Alabama 
+            #   1, ... Alabama 
+            #   2, ... Alabama                 
+            #   0, ... California
+            #   1, ... California 
+            #   2, ... California
+            # ...
+            
+            week_indices = list(range(num_weeks)) * num_states 
+            
+            # Finally: add '0/1/2/0,1,2/...' as first col
+    
+            df.insert(0,'Week',week_indices)
+            
+            # Replace the State codes (0,1,2...) with
+            # the State abbreviations:
+            
+            df = df.replace(to_replace={'State': self.state_codings})
+    
+            # Build a row for each week that is
+            # the some of all queries on one day
+            # across all States:
             #
-            # So the week was summed as well, which is silly.
+            #    week   Mon                     Tue
+            #      0  sum(of Mondays of wk0)    sum(of Tuesdays of wk0)    ...
+            #      1  sum(of Mondays of wk1)    sum(of Tuesdays of wk0)    ...
             
-            wk_summed['week'] = wk
-
-            # Add value 'US' for the 'State' column
-            wk_summed['State'] = 'US'
-            df_final = df_final.append(wk_summed, ignore_index=True)
-
-        # Finally, move the State column into left-most position:
-        df_final = df_final.reindex(columns=['State', 'week', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
-        return df_final
+            df_final = df.copy()
+            for wk in range(num_weeks):
+                that_wk_only = df[df['Week'] == wk]
+                
+                # Now sum all the weekday cols, 
+                # getting a series [sum(Mon), sum(Tue),...]
+                wk_summed = that_wk_only[['Mon','Tue','Wed','Thu','Fri','Sat','Sun']].sum(axis=0)
+    
+                # Add value 'US' for the 'State' column
+                wk_summed['State']  = 'US'
+                wk_summed['Year']   = that_wk_only.loc[wk,'Year']
+                wk_summed['Query']  = that_wk_only.loc[wk,'Query']
+                wk_summed['Week']   = that_wk_only.loc[wk,'Week']
+                df_final = df_final.append(wk_summed, ignore_index=True)
+                
+                # Move the State column into left-most position:
+                df_final = df_final.reindex(columns=['State', 'Year', 'Query', 'Week', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
+                
+                if search_query_df is None:
+                    search_query_df = df_final.copy()
+                else:
+                    search_query_df = search_query_df.append(df_final.copy())
+        idx_state = search_query_df['State']
+        idx_year  = search_query_df['Year']
+        idx_state.name = 'Region'
+        idx_year.name = 'Election'
+        search_query_df = search_query_df.set_index([idx_state, idx_year])
+        return search_query_df
     
     #------------------------------------
     # import_state_mappings
@@ -313,16 +354,16 @@ class StatePredictor(object):
             
             # 16 columns (each of which corresponds to a level in
             # the multiindex:
-            df.columns = ['index_dup', 'State', 'VEP Total Ballots Counted', 'VEP Highest Office',
-                   'VAP Highest Office', 'Total Ballots Counted', 'Highest Office', 'Voting Eligible Population',
-                   'Voting Age Population',
-                   'Non Citizen Perc',
+            df.columns = ['index_dup', 'State', 'Voter_Turnout', 'VEP_Highest_Office',
+                   'VAP_Highest_Office', 'Total_Ballots_Counted', 'Highest_Office', 'Voting_Eligible_Population',
+                   'Voting_Age_Population',
+                   'Non_Citizen_Perc',
                    'Prison',
                    'Probation',
                    'Parole',
-                   'Total Ineligible Felons',
-                   'Overseas Eligible',
-                   'State Abv']
+                   'Total_Ineligible_Felons',
+                   'Overseas_Eligible',
+                   'State_Abv']
     
             # Add a year col just after the State:
             df.insert(2,'Year',[year]*len(df)) 
@@ -334,7 +375,10 @@ class StatePredictor(object):
             # But some States don't report this number. Their value will 
             # be NaN. In that case we use the 'VEP Highest Office' percentage:
             
-            df['VEP Total Ballots Counted'] = df['VEP Total Ballots Counted'].fillna(df['VEP Highest Office'])
+            df['Voter_Turnout'] = df['Voter_Turnout'].fillna(df['VEP_Highest_Office'])
+            
+            # Same with 'Total Ballots Counted':
+            df['Total_Ballots_Counted'] = df['Total_Ballots_Counted'].fillna(df['Highest_Office'])
     
             # The last row may have 'Notes' in it, delete such a row:
             #if df['State']['Unnamed: 0_level_1'].iloc[-1][-1].startswith('Note:'):
@@ -348,8 +392,30 @@ class StatePredictor(object):
                 voter_turnout_df = df.copy()
             else:
                 voter_turnout_df = voter_turnout_df.append(df.copy())
+
+        # Set a two-element index to allow
+        #   df.loc['CA', 2016] to get all 2016
+        # California results. We get the data
+        # for the two index levels from columns
+        # 'State' and 'Year', but we rename them
+        # to 'Region' and 'Election'
+        
+        region_series         = voter_turnout_df['State_Abv'].copy()
+        election_series       = voter_turnout_df['Year'].copy()
+        region_series.name    = 'Region'
+        election_series.name  = 'Election'
+        voter_turnout_df = voter_turnout_df.set_index([region_series, election_series])
         
         return voter_turnout_df
+
+    #------------------------------------
+    # add_disaster_information 
+    #-------------------
+    
+    def add_disaster_information(self, election_features):
+        
+        print(election_features)
+    
 
 
     #------------------------------------
@@ -372,8 +438,11 @@ class StatePredictor(object):
         @rtype pd.DataFrame
         '''
         
+        # Save the index, which will be reset
+        # to its default by the subsequent merge():
+        idx = voter_turnout.index 
         features = voter_turnout.merge(search_features, 
-                                       left_on='State Abv', 
+                                       left_on='State_Abv', 
                                        right_on='State', 
                                        how='inner')
         
@@ -383,6 +452,9 @@ class StatePredictor(object):
         
         features = features.drop(labels='State_y', axis='columns')
         features = features.rename(columns={'State_x' : 'State'})
+        
+        # Restore the index:
+        features = features.set_index(idx)
         
         return features
 
@@ -400,23 +472,17 @@ class StatePredictor(object):
 # ------------------------ Main ------------
 if __name__ == '__main__':
     
-    parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]),
-                                     formatter_class=argparse.RawTextHelpFormatter,
-                                     description="Predict State from Google queries"
-                                     )
+#     parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]),
+#                                      formatter_class=argparse.RawTextHelpFormatter,
+#                                      description="Predict State from Google queries"
+#                                      )
+# 
+#     parser.add_argument('-l', '--errLogFile',
+#                         help='fully qualified log file name to which info and error messages \n' +\
+#                              'are directed. Default: stdout.',
+#                         dest='errLogFile',
+#                         default=None);
+# 
+#     args = parser.parse_args();
 
-    parser.add_argument('-l', '--errLogFile',
-                        help='fully qualified log file name to which info and error messages \n' +\
-                             'are directed. Default: stdout.',
-                        dest='errLogFile',
-                        default=None);
-    parser.add_argument('csv_file',
-                        help='Path to data file'
-                        )
-
-    args = parser.parse_args();
-
-    if not os.path.exists(args.csv_file):
-        print(f"Cannot find data file '{args.csv_file}'")
-
-    StatePredictor(args.csv_file)
+    StatePredictor()
