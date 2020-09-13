@@ -23,12 +23,23 @@ class StatePredictor(object):
                                             '../../data/turnoutRates2016NovemberGeneralElection.xlsx')
                            }
     
-    QUERY_TERM_FILES    = {2008: os.path.join(os.path.dirname(__file__),
-                                            '../../data/dataset_vote_2008.csv'),
+    QUERY_TERM_FILES    = {
+                           2004: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2004_vote.csv'),
+                           2006: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2006_vote.csv'),
+                           2008: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2008_vote.csv'),
+                           2010: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2010_vote.csv'),
                            2012: os.path.join(os.path.dirname(__file__),
-                                            '../../data/dataset_vote_2012.csv'),
+                                            '../../data/dataset_2012_vote.csv'),
+                           2014: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2014_vote.csv'),
                            2016: os.path.join(os.path.dirname(__file__),
-                                            '../../data/dataset_vote_2016.csv')
+                                            '../../data/dataset_2016_vote.csv'),
+                           20018: os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2018_vote.csv'),
                           }
 
     #------------------------------------
@@ -57,11 +68,11 @@ class StatePredictor(object):
         
         election_features = self.merge_turnout_query_counts(voter_turnout, search_features)
         
-        # Add a column for where disaster was
-        # happening at election time:
+        # Add information about election time disasters:
+        # Whether or not (col 'Disaster', and the name
+        # of the disaster (col 'Disaster_Name'):
         
-        election_features = self.add_disaster_information(election_features) 
-        
+        election_features = self.add_disaster_information(election_features)
 
         # Get values in column that we are to predict:
         y = election_features[label_col]
@@ -78,10 +89,9 @@ class StatePredictor(object):
     
     def import_search_data(self, search_data_dict):
         '''
-        Read CSV file, and return a tuple,
-        (x,Y). Value x is a dataframe containing
-        the feature vectors. Value Y is a sequence
-        that are the predicted values.
+        Read CSV file, and return a dataframe
+        containing the feature vectors of Google
+        searches for voting related terms 
         
         Assumptions:
            o First seven columns are query term counts for each
@@ -90,12 +100,12 @@ class StatePredictor(object):
              case, but could be voter turnout)
              
              Example rows:
-                 76,100,92,54,71,69,46,0,2008,vote     < week3 before election State 0
-                 76,57,67,85,100,96,99,0,2008,vote     < week2 before election State 0
-                 43,60,52,100,73,80,47,0,2008,vote     < week1 before election State 0
-                 100,67,0,61,42,33,84,1,2008,vote      < week3 before election State 1
-                 0,47,100,55,56,46,50,1,2008,vote      < week2 before election State 1
-                 44,42,65,49,100,42,81,1,2008,vote     < week1 before election State 1
+                 76,100,92,54,71,69,46,0,2008,vote     # record for week3 before election State 0
+                 76,57,67,85,100,96,99,0,2008,vote     # record for week2 before election State 0
+                 43,60,52,100,73,80,47,0,2008,vote     # record for week1 before election State 0
+                 100,67,0,61,42,33,84,1,2008,vote      # record for week3 before election State 1
+                 0,47,100,55,56,46,50,1,2008,vote      # record for week2 before election State 1
+                 44,42,65,49,100,42,81,1,2008,vote     # record for week1 before election State 1
                  61,42,77,100,79,44,91,2,2008,vote                   ...       State 2
 
            o Consecutive rows are for weeks before election.
@@ -104,17 +114,18 @@ class StatePredictor(object):
              represent data for two consecutive weeks before
              the election.
              
-        Returns a dataframe, where '*' is the sum of searches 
-        over all States on that day:
-                State Query  Week  Mon   Tue  Wed  Thu  Fri  Sat  Sun 
-           ...    AL   vote        0   76  100   92   54   71   69   46
-                  AL   vote   1   76   57   67   85  100   96   99
-                  AL   vote       2   43   60   52  100   73   80   47
-                  AK   vote   0  100   67    0   61   42   33   84
+        Returns a dataframe, where '*' in the last three
+        records is the sum of searches over all States on that day:
+        
+                State Query  Week0   Week1    Week2    Mon   Tue  Wed  Thu  Fri  Sat  Sun 
+           ...    AL   vote    1       0        0       76  100   92   54   71   69   46
+                  AL   vote    0       1        0       76   57   67   85  100   96   99
+                  AL   vote    0       0        1       43   60   52  100   73   80   47
+                  AK   vote    1       0        0      100   67    0   61   42   33   84
                     ...
-                  US    0    *   *    *    *    *    *    * 
-                  US    1    *   *    *    *    *    *    * 
-                  US    2    *   *    *    *    *    *    *
+                  US   vote    *   *    *    *    *    *    * 
+                  US   vote    *   *    *    *    *    *    * 
+                  US   vote    *   *    *    *    *    *    *
 
         In addition, a multiindex ('Region', 'Election') is installed,
         allowing selections such as:
@@ -123,25 +134,24 @@ class StatePredictor(object):
            
             search_query_df.xs(['WY',2016])
             ==> Region Election                                                           
-                WY     2016        WY  2016  vote     0   49    0    0  100   58   93   45
-                       2016        WY  2016  vote     1   80    0   58   68   61  100    0
-                       2016        WY  2016  vote     2  100    0    0   63    0   47   45
-                       2016        WY  2016  vote     0   49    0    0  100   58   93   45
-                       2016        WY  2016  vote     1   80    0   58   68   61  100    0
-                       2016        WY  2016  vote     2  100    0    0   63    0   47   45
-                       2016        WY  2016  vote     0   49    0    0  100   58   93   45
-                       2016        WY  2016  vote     1   80    0   58   68   61  100    0
-                       2016        WY  2016  vote     2  100    0    0   63    0   47   45
+                WY     2016        WY  2016  vote     1   0   0  49    0    0  100   58   93   45
+                       2016        WY  2016  vote     0   1   0  80    0   58   68   61  100    0
+                       2016        WY  2016  vote     0   0   1  00    0    0   63    0   47   45
+                       2016        WY  2016  vote     1   0   0  49    0    0  100   58   93   45
+                       2016        WY  2016  vote     0   1   0  80    0   58   68   61  100    0
+                       2016        WY  2016  vote     0   0   1  00    0    0   63    0   47   45
+                       2016        WY  2016  vote     1   0   0  49    0    0  100   58   93   45
+                       2016        WY  2016  vote     0   1   0  80    0   58   68   61  100    0
+                       2016        WY  2016  vote     0   0   1  00    0    0   63    0   47   45
 
         Ex2.   select all vote counts of week 0
             search_query_df[search_query_df.Week == 0]
             ==> Region Election                                ...                              
-                AL     2008        AL  2008  vote     0    46  ...    58    56    27    75   100
-                AK     2008        AK  2008  vote     0     0  ...    81   100     0    76    74
-                AZ     2008        AZ  2008  vote     0    91  ...    86    60    52    72    57
-                AR     2008        AR  2008  vote     0     0  ...    90    96     0   100    67
+                AL     2008        AL  2008  vote     1   0  0  46  ...    58    56    27    75   100
+                AK     2008        AK  2008  vote     1   0  0   0  ...    81   100     0    76    74
+                AZ     2008        AZ  2008  vote     1   0  0  91  ...    86    60    52    72    57
+                AR     2008        AR  2008  vote     1   0  0  ...    90    96     0   100    67
                 
-
         @param csv_file: comma separated data file 
         @type csv_file: str
         @return: tuple with matrix n x 8: one week indicator
@@ -156,7 +166,7 @@ class StatePredictor(object):
             csv_file = search_data_dict[year]
             df = pd.read_csv(csv_file,
                              names=['Mon','Tue','Wed','Thu','Fri','Sat','Sun',
-                                    'State','Year', 'Query'],
+                                    'StateCode', 'Query'],
                              index_col=False, # 1st col is *not* an index col
                              )
             
@@ -168,36 +178,62 @@ class StatePredictor(object):
             # Take State 0 (any will do), and could how
             # often it occurs in the State column:
             
-            num_weeks  = len(df[df.State == 0])
+            num_weeks  = len(df[df.StateCode == 0])
     
             # How many States are in the data? Find
             # by counting unique values in the States
             # column: 
-            num_states = len(df.groupby('State').nunique())
+            num_states = len(df.groupby('StateCode').nunique())
             
-            # Create as many [0,1,2,...] as there
-            # are States. Ex:
-            #   0, ... Alabama 
-            #   1, ... Alabama 
-            #   2, ... Alabama                 
-            #   0, ... California
-            #   1, ... California 
-            #   2, ... California
+            # Create as many one-hot week vectors as
+            # there are are States. Ex for 3 weeks:
+            #   1,   0,    0, ... Alabama       |
+            #   0,   1,    0,     Alabama       | build this 1/0 matrix (w/o state nm)
+            #   0,   0,    1,     Alabama       |
+            
+            #   1,   0,    0,     California
+            #   0,   1,    0,     California 
+            #   0,   0,    1,     California
             # ...
             
-            week_indices = list(range(num_weeks)) * num_states 
+            # Build a one-hot vector as wide as
+            # the number of weeks, and beginning
+            # with a 1 for week 0:
+            one_hot_wk = [1]
+            one_hot_wk.extend([0]*(num_weeks - 1))
+            wk_matrix = [one_hot_wk]
+            # Create additional rows, with the 1
+            # shifted right:
+            for _wk_indx in range(num_weeks - 1):
+                one_hot_wk = np.roll(one_hot_wk, 1)
+                wk_matrix = np.append(wk_matrix, one_hot_wk)
+
+            # The append() calls flattened the
+            # resulting vector. Turn into matrix:
+            wk_matrix = wk_matrix.reshape([num_weeks, num_weeks])
             
-            # Finally: add '0/1/2/0,1,2/...' as first col
-    
-            df.insert(0,'Week',week_indices)
             
-            # Replace the State codes (0,1,2...) with
-            # the State abbreviations:
+            # Create col names like 'wk0', 'wk1',...
+            wk_col_names = ['wk' + str(n) for n in range(num_weeks)]
+            # Turn matrix into df, w/ col names 'wk0', 'wk1',...
+            wk_matrix = pd.DataFrame(wk_matrix, columns=wk_col_names)
             
-            df = df.replace(to_replace={'State': self.state_codings})
-    
+            # Replicate the little matrix as many
+            # times as there are States:
+
+            wk_matrix = pd.concat([wk_matrix]*num_states, ignore_index=True)
+            
+            # Finally: add the matrix as the as first 
+            # num_weeks columns:
+
+            for col_num, col_name in enumerate(wk_col_names):
+                df.insert(col_num, col_name, wk_matrix.loc[:,col_name])
+                
+            # Remove the StateCode col:
+            #df = df.drop('StateCode', axis='columns')
+            
             # Build a row for each week that is
-            # the some of all queries on one day
+            # the sum of all queries on one day
             # across all States:
             #
             #    week   Mon                     Tue
@@ -206,31 +242,42 @@ class StatePredictor(object):
             
             df_final = df.copy()
             for wk in range(num_weeks):
-                that_wk_only = df[df['Week'] == wk]
+                wk_col_name = f'wk{wk}'
+                that_wk_only = df[df[wk_col_name] == 1]
+                # Create a one-hot series as long as there 
+                # are weeks of data; initially set all to
+                # zero:
+                week_vec = pd.Series([0]*num_weeks, index=wk_col_names)
+                # Set the current week's slot to 1:
+                week_vec[wk_col_name] = 1
                 
                 # Now sum all the weekday cols, 
                 # getting a series [sum(Mon), sum(Tue),...]
                 wk_summed = that_wk_only[['Mon','Tue','Wed','Thu','Fri','Sat','Sun']].sum(axis=0)
+                # Prepend the one-hot week vec to the
+                # vector of summed days:
+                wk_summed = pd.concat([week_vec, wk_summed])
+                # Add the StateCode and Query
+                wk_summed['StateCode']  = self.reverse_state_codings['US']
+                wk_summed['Query']      = that_wk_only.loc[wk,'Query']
     
-                # Add value 'US' for the 'State' column
-                wk_summed['State']  = 'US'
-                wk_summed['Year']   = that_wk_only.loc[wk,'Year']
-                wk_summed['Query']  = that_wk_only.loc[wk,'Query']
-                wk_summed['Week']   = that_wk_only.loc[wk,'Week']
                 df_final = df_final.append(wk_summed, ignore_index=True)
                 
-                # Move the State column into left-most position:
-                df_final = df_final.reindex(columns=['State', 'Year', 'Query', 'Week', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
-                
-                if search_query_df is None:
-                    search_query_df = df_final.copy()
-                else:
-                    search_query_df = search_query_df.append(df_final.copy())
-        idx_state = search_query_df['State']
-        idx_year  = search_query_df['Year']
-        idx_state.name = 'Region'
-        idx_year.name = 'Election'
-        search_query_df = search_query_df.set_index([idx_state, idx_year])
+            # Move the State column into left-most position:
+            #df_final = df_final.reindex(columns=['State', 'Year', 'Query', 'Week', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
+            
+            if search_query_df is None:
+                search_query_df = df_final.copy()
+            else:
+                search_query_df = search_query_df.append(df_final.copy())
+
+            # Get from the State code to the long State name to the State abbrev:
+            state_codes   = df_final['StateCode']
+            idx_state = [self.state_codings[state_code] for state_code in state_codes]
+            idx_year  = year
+            idx_state.name = 'Region' #***** List object has no attr 'name
+            idx_year.name = 'Election'
+            search_query_df = search_query_df.set_index([idx_state, idx_year])
         return search_query_df
     
     #------------------------------------
@@ -247,9 +294,23 @@ class StatePredictor(object):
            ID    State
            {0   :   AL
            1   :   AK
+           
+           50  : 'WY'
+           51  : 'US'    # <---- Added as if a State
               ...}
 
-        2. self.state_abbrevs: long State names to 2-letter abbreviations
+        2. A reverse dict: State --> StateCode:
+           self.reverse_state_codings 
+           
+           {'AL'   :   0
+            'AK'   :   1
+           
+            'WY'  : 50
+            'US'  : 51    # <---- Added as if a State
+              ...}
+
+
+        3. self.state_abbrevs: long State names to 2-letter abbreviations
         
            LongName  :   Abbrev
           {'New York' :   'NY'
@@ -271,6 +332,14 @@ class StatePredictor(object):
             reader = csv.reader(fd)
             for (coding, state_abbrev) in reader:
                 self.state_codings[int(coding)] = state_abbrev
+                
+        # Add the US 'State' after the last real State:
+        self.state_codings[max(self.state_codings.keys()) + 1] = 'US'
+        
+        # Reverse state/code lookup:
+        self.reverse_state_codings = {}
+        for state_code, state in self.state_codings.items():
+            self.reverse_state_codings[state] = state_code
 
         # Long State name to 2-letter abbreviation:
         #
@@ -414,9 +483,51 @@ class StatePredictor(object):
     
     def add_disaster_information(self, election_features):
         
-        print(election_features)
-    
+        # For convenience of var name brevity:
+        df = election_features.copy()
+        
+        # Sort the index of the df so that we
+        # don't get warnings about inefficiency 
+        # when setting selected col values:
+        df = df.sort_index()
+        
+        # Initialize the disaster and disaster name cols:
+        df['Disaster'] = 0
+        df['Disaster_Name'] = ''
 
+        #**********
+        # To add when congressional elections are added:
+        #df.loc[('LA',2006), 'Disaster'] = 1
+        #df.loc[('LA',2006), 'Disaster_Name'] = 'Katrina'
+        #**********
+
+        # Hurricane Sany, 2012:
+        df.loc[('NY',2012), 'Disaster'] = 1
+        df.loc[('NY',2012), 'Disaster_Name'] = 'Sandy'
+        df.loc[('NJ',2012), 'Disaster'] = 1
+        df.loc[('NJ',2012), 'Disaster_Name'] = 'Sandy'
+        df.loc[('CT',2012), 'Disaster'] = 1
+        df.loc[('CT',2012), 'Disaster_Name'] = 'Sandy'
+        df.loc[('VA',2012), 'Disaster'] = 1
+        df.loc[('VA',2012), 'Disaster_Name'] = 'Sandy'
+        df.loc[('DE',2012), 'Disaster'] = 1
+        df.loc[('DE',2012), 'Disaster_Name'] = 'Sandy'
+        df.loc[('MA',2012), 'Disaster'] = 1
+        df.loc[('MA',2012), 'Disaster_Name'] = 'Sandy'
+        df.loc[('NH',2012), 'Disaster'] = 1
+        df.loc[('NH',2012), 'Disaster_Name'] = 'Sandy'
+
+        # Hurricane Matthew, 2016
+        df.loc[('FL',2016), 'Disaster'] = 1
+        df.loc[('FL',2016), 'Disaster_Name'] = 'Matthew'
+        df.loc[('GA',2016), 'Disaster'] = 1
+        df.loc[('GA',2016), 'Disaster_Name'] = 'Matthew'
+        df.loc[('NC',2016), 'Disaster'] = 1
+        df.loc[('NC',2016), 'Disaster_Name'] = 'Matthew'
+        df.loc[('SC',2016), 'Disaster'] = 1
+        df.loc[('SC',2016), 'Disaster_Name'] = 'Matthew'
+
+        return df
 
     #------------------------------------
     # merge_turnout_query_counts
@@ -437,25 +548,24 @@ class StatePredictor(object):
             both inputs
         @rtype pd.DataFrame
         '''
-        
-        # Save the index, which will be reset
-        # to its default by the subsequent merge():
-        idx = voter_turnout.index 
-        features = voter_turnout.merge(search_features, 
-                                       left_on='State_Abv', 
-                                       right_on='State', 
-                                       how='inner')
-        
+        # Voter turnout and query frequencies
+        # have two column names in common: State, and Year.
+        # The rsuffix below renames the search_features
+        # columns to State_xxx and Year_xxx in the 
+        # join, so we can remove them later:
+
+        features = voter_turnout.join(search_features, 
+                   on=['Region','Election'], 
+                   how='left',
+                   rsuffix='_XXX'
+                   )
+
         # Rename/remove columns introduced by
         # the merge where column name ambiguities
         # existed:
         
-        features = features.drop(labels='State_y', axis='columns')
-        features = features.rename(columns={'State_x' : 'State'})
-        
-        # Restore the index:
-        features = features.set_index(idx)
-        
+        features = features.drop(labels=['State_XXX', 'Year_XXX'], axis='columns')
+
         return features
 
 # ------------------------ Utilities ----------

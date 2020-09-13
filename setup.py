@@ -18,6 +18,7 @@ setup(
     install_requires = ['scikit-learn>=0.23.2',
                         'pandas>=1.1.1',
                         'xlrd>=1.2.0',           # Pandas Excel support
+                        'category-encoders>=2.2.2', # leave-one-out encoding
                         ],
 
     #dependency_links = ['https://github.com/DmitryUlyanov/Multicore-TSNE/tarball/master#egg=package-1.0']
