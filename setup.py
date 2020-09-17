@@ -19,6 +19,7 @@ setup(
                         'pandas>=1.1.1',
                         'xlrd>=1.2.0',           # Pandas Excel support
                         'category-encoders>=2.2.2', # leave-one-out encoding
+                        'seaborn>=0.11.0',
                         ],
 
     #dependency_links = ['https://github.com/DmitryUlyanov/Multicore-TSNE/tarball/master#egg=package-1.0']
