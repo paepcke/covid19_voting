@@ -16,6 +16,7 @@ from sklearn.metrics import make_scorer
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib import rcParams
 
 import pandas as pd
 import numpy as np
@@ -80,6 +81,8 @@ class StatePredictor(object):
                                             '../../data/dataset_2018_elections.csv'),
 
                           }
+    VOTER_TURNOUT_DEMOGRAPHICS = os.path.join(os.path.dirname(__file__),
+                                            '../../data/turnoutByRaceAgeEduCPS.xlsx')
     
     RANDOM_SEED = 42
 
@@ -93,6 +96,11 @@ class StatePredictor(object):
         Constructor
         '''
         self.log = LoggingService()
+        
+        # Get charts to layout properly (e.g. show
+        # all of the axis labels:
+        rcParams.update({'figure.autolayout': True})
+
 
         # Directory with various data files:
         self.data_dir = os.path.join(os.path.dirname(__file__), '../../data')
@@ -104,6 +112,9 @@ class StatePredictor(object):
         self.log.info("Importing voter turnout data (Election Project)...")
         voter_turnout = self.import_voter_turnout(self.VOTER_TURNOUT_FILES)
         self.log.info("Done importing voter turnout data (Election Project).")
+
+        # Import demographics of voter turnout:
+        self.add_turnout_demographics(voter_turnout)
 
         # Import csv file with Google query statistics:
         self.log.info("Importing Google search keyword counts (Google Trends)...")
@@ -238,7 +249,7 @@ class StatePredictor(object):
                                     key=lambda name_imp_pair: name_imp_pair[1],
                                     reverse=True
                                     )
-        print(f'Feature importances: {sorted_importances}')
+        self.log.info(f'Feature importances: \n{sorted_importances}')
         
         #print(f'Best params: {clf.best_params_}')
         #print(f'Best score: {clf.best_score_}')
@@ -249,7 +260,7 @@ class StatePredictor(object):
     
     def explore_features(self):
         
-        #*****plt.figure(figsize=(1,1))
+        plt.tight_layout()
         plt.figure()
         cor = self.election_features.corr()
         sns.heatmap(cor, annot=True, cmap=plt.cm.Reds)
@@ -691,10 +702,29 @@ class StatePredictor(object):
             # 
             
             if voter_turnout_df is None:
-                voter_turnout_df = df.copy()
+                voter_turnout_df  = df.copy()
+                sum_prev_turnouts = df.VoterTurnout 
+                num_elections = 1
             else:
                 voter_turnout_df = voter_turnout_df.append(df.copy())
+                voter_turnout_df['MeanPastTurnout']  = sum_prev_turnouts / num_elections 
+                sum_prev_turnouts = sum_prev_turnouts + df.VoterTurnout
+                num_elections += 1
 
+        # Drop some columns that are unlikely features:
+        voter_turnout_df = voter_turnout_df.drop([
+                            'VEPHighestOffice',
+                            'VAPHighestOffice',
+                            'HighestOffice',
+                            'VotingEligiblePopulation',
+                            'VotingAgePopulation',
+                            'Prison',
+                            'Probation',
+                            'Parole'
+                            ],
+                            axis=1)
+
+        
         # Set a two-element index to allow
         #   df.loc['CA', 2016] to get all 2016
         # California results. We get the data
@@ -710,6 +740,101 @@ class StatePredictor(object):
         voter_turnout_df = voter_turnout_df.set_index([region_series, election_series])
         
         return voter_turnout_df
+
+    #------------------------------------
+    # add_turnout_demographics 
+    #-------------------
+    
+    def add_turnout_demographics(self, election_features):
+        '''
+        Given output of import_voter_turnout(), add columns
+        TurnoutWhite, TurnoutBlack, TurnoutHispanic. The
+        numbers are based on the corrected CPS Census survey
+        http://www.electproject.org/home/voter-turnout/demographics
+        
+        It is fine if columns beyond what import_voter_turnout()
+        produces have been added before calling this method. 
+        
+        @param election_features: table as produced by 
+            import_voter_turnout(), or wider.
+        @type election_features: pd.DataFrame
+        @return new table with the additional columns
+        @rtype pd.DataFrame
+        '''
+        
+        excel_src = self.VOTER_TURNOUT_DEMOGRAPHICS 
+        
+        # The 'header=[0,1]' notifies the read method
+        # that the first two rows are taken by a nested
+        # header. The result will feature a multiindex:
+        df = pd.read_excel(excel_src, 
+                           sheet_name='Race and Ethnicity',
+                           header=[0])
+        # We now have:
+        #    Census Weight for Vote Overreport Bias Correction\n  ...  Unnamed: 17
+        # 0                                        Turnout Rate   ...     1986.000
+        # 1                                  Non-Hispanic White   ...        0.398
+        # 2                                  Non-Hispanic Black   ...        0.358
+        # 3                                            Hispanic   ...        0.282
+        # 4                                               Other   ...        0.310
+        # 5                                                 NaN   ...          NaN
+        # 6                                 Share of Electorate   ...     1986.000
+        # 7                                  Non-Hispanic White   ...        0.850
+        # 8                                  Non-Hispanic Black   ...        0.100
+        # 9                                            Hispanic   ...        0.036
+        # 10                                              Other   ...        0.015
+        # 11                                                NaN   ...          NaN
+        #                      ... Goes on with unwanted
+
+                
+        # Fashion appropriate col headers:
+        df.columns = ['PopSegment'] + list(range(2018,1984,-2))
+        
+        # Drop left-over header line:
+        df = df.drop(0)
+        
+        # Giving us:
+        #              PopSegment       2018       2016  ...      1990      1988      1986
+        # 1    Non-Hispanic White     0.5521     0.6468  ...     0.409     0.557     0.398
+        # 2    Non-Hispanic Black     0.5131     0.5986  ...     0.330     0.468     0.358
+        # 3              Hispanic     0.3688     0.4491  ...     0.260     0.385     0.282
+        # 4                 Other     0.3969     0.4625  ...     0.291     0.413     0.310
+        # 5                   NaN        NaN        NaN  ...       NaN       NaN       NaN
+        # 6   Share of Electorate  2018.0000  2016.0000  ...  1990.000  1988.000  1986.000
+        # 7    Non-Hispanic White     0.7326     0.7363  ...     0.856     0.851     0.850
+        # 8    Non-Hispanic Black     0.1222     0.1234  ...     0.093     0.097     0.100
+        # 9              Hispanic     0.0940     0.0908  ...     0.035     0.036     0.036
+        # 10                Other     0.0512     0.0495  ...     0.016     0.017     0.015
+        # 11                  NaN        NaN        NaN  ...       NaN       NaN       NaN
+        
+        # Turn 'Share of Electorate' into columns:
+        
+        # Remove the rows with nan:
+        df = df.drop(df[df.PopSegment.isnull()].index)
+
+        # Drop the intermediate header: "Share of Electorate" 2018.000...
+        df = df.drop(df[df.PopSegment == 'Share of Electorate'].index)
+
+        # Don't want the 'Census Weight' versions of these
+        # stats. So remove all rows starting at 'Census Weight'
+        # in the PopSegment col. The [0] is b/c an
+        # array-like is returned:
+        
+        del_row_start = df[df.PopSegment == 'Census Weight'].index[0]
+        df = df.iloc[df.index < del_row_start]
+        
+        df.PopSegment = pd.Series([
+            'TurnoutNonHispWhite',
+            'TurnoutNonHispBlack',
+            'TurnoutHispanic',
+            'TurnoutOther',
+            'PercOfElectorateNonHispWhite',
+            'PercOfElectorateNonHispBlack',
+            'PercOfElectorateHispanic',
+            'PercOfElectorateOther'])
+
+        print(df)
+
 
     #------------------------------------
     # add_disaster_information 
