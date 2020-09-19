@@ -84,6 +84,21 @@ class StatePredictor(object):
     VOTER_TURNOUT_DEMOGRAPHICS = os.path.join(os.path.dirname(__file__),
                                             '../../data/turnoutByRaceAgeEduCPS.xlsx')
     
+    RACE_ETHNICITY_BY_STATE = {
+                           2008: os.path.join(os.path.dirname(__file__),
+                                            '../../data/raceEthnicityByState2008.csv'),
+                           2010: os.path.join(os.path.dirname(__file__),
+                                            '../../data/raceEthnicityByState2010.csv'),
+                           2012: os.path.join(os.path.dirname(__file__),
+                                            '../../data/raceEthnicityByState2012.csv'),
+                           2014: os.path.join(os.path.dirname(__file__),
+                                            '../../data/raceEthnicityByState2014.csv'),
+                           2016: os.path.join(os.path.dirname(__file__),
+                                            '../../data/raceEthnicityByState2016.csv'),
+                           2018: os.path.join(os.path.dirname(__file__),
+                                            '../../data/raceEthnicityByState2018.csv')
+                           }
+
     RANDOM_SEED = 42
 
     #------------------------------------
@@ -114,7 +129,9 @@ class StatePredictor(object):
         self.log.info("Done importing voter turnout data (Election Project).")
 
         # Import demographics of voter turnout:
-        self.add_turnout_demographics(voter_turnout)
+        self.log.info("Importing voting-eligible populations by race for each State...")
+        voter_turnout = self.add_turnout_demographics(voter_turnout)
+        self.log.info("Done importing voting-eligible populations by race for each State.")        
 
         # Import csv file with Google query statistics:
         self.log.info("Importing Google search keyword counts (Google Trends)...")
@@ -262,6 +279,7 @@ class StatePredictor(object):
         
         plt.tight_layout()
         plt.figure()
+        plt.xticks(rotate=45)
         cor = self.election_features.corr()
         sns.heatmap(cor, annot=True, cmap=plt.cm.Reds)
         plt.show()
@@ -653,7 +671,7 @@ class StatePredictor(object):
             if year == 2018:
 
                 vap_highest_office = self.compute_2018_VAPHighestOffice()
-                # Get location of 'VEP Highest Offict', after which
+                # Get location of 'VEP Highest Office', after which
                 # we then place the data:
                 dest = df.columns.get_loc('2018 Vote for Highest Office VEP Turnout Rate')
                 df.insert(dest,'VAPHighestOffice',vap_highest_office.to_numpy())
@@ -699,8 +717,6 @@ class StatePredictor(object):
             # We hope they'll continue to start with 'Note':
             df = df.drop(df[df.State.str.startswith('Note')].index)
             
-            # 
-            
             if voter_turnout_df is None:
                 voter_turnout_df  = df.copy()
                 sum_prev_turnouts = df.VoterTurnout 
@@ -711,6 +727,26 @@ class StatePredictor(object):
                 sum_prev_turnouts = sum_prev_turnouts + df.VoterTurnout
                 num_elections += 1
 
+        # Set a two-element index to allow
+        #   df.loc['CA', 2016] to get all 2016
+        # California results. We get the data
+        # for the two index levels from columns
+        # 'State' and 'Year', but we rename them
+        # to 'Region' and 'Election'
+        
+        state_abbrevs = self.state_abbrev_series(voter_turnout_df.State)
+        region_series         = state_abbrevs
+        election_series       = voter_turnout_df['Year'].copy()
+        region_series.name    = 'Region'
+        election_series.name  = 'Election'
+        voter_turnout_df = voter_turnout_df.set_index([region_series, election_series])
+
+        # Make some stats available for later, then 
+        # drop them from the features:
+        
+        self.voting_eligible_population = voter_turnout_df['VotingEligiblePopulation']
+        self.voting_age_population      = voter_turnout_df['VotingAgePopulation']
+        
         # Drop some columns that are unlikely features:
         voter_turnout_df = voter_turnout_df.drop([
                             'VEPHighestOffice',
@@ -725,19 +761,7 @@ class StatePredictor(object):
                             axis=1)
 
         
-        # Set a two-element index to allow
-        #   df.loc['CA', 2016] to get all 2016
-        # California results. We get the data
-        # for the two index levels from columns
-        # 'State' and 'Year', but we rename them
-        # to 'Region' and 'Election'
-        
-        state_abbrevs = self.state_abbrev_series(voter_turnout_df.State)
-        region_series         = state_abbrevs
-        election_series       = voter_turnout_df['Year'].copy()
-        region_series.name    = 'Region'
-        election_series.name  = 'Election'
-        voter_turnout_df = voter_turnout_df.set_index([region_series, election_series])
+
         
         return voter_turnout_df
 
@@ -745,19 +769,20 @@ class StatePredictor(object):
     # add_turnout_demographics 
     #-------------------
     
-    def add_turnout_demographics(self, election_features):
+    def add_turnout_demographics(self, voter_turnout):
         '''
         Given output of import_voter_turnout(), add columns
-        TurnoutWhite, TurnoutBlack, TurnoutHispanic. The
+        with absolute numbers of voting-eligible populations:
+        VEP_White, VEP_Black, VEP_Hispanic, and VEP_Other. The
         numbers are based on the corrected CPS Census survey
         http://www.electproject.org/home/voter-turnout/demographics
         
         It is fine if columns beyond what import_voter_turnout()
         produces have been added before calling this method. 
         
-        @param election_features: table as produced by 
+        @param voter_turnout: table as produced by 
             import_voter_turnout(), or wider.
-        @type election_features: pd.DataFrame
+        @type voter_turnout: pd.DataFrame
         @return new table with the additional columns
         @rtype pd.DataFrame
         '''
@@ -823,18 +848,219 @@ class StatePredictor(object):
         del_row_start = df[df.PopSegment == 'Census Weight'].index[0]
         df = df.iloc[df.index < del_row_start]
         
-        df.PopSegment = pd.Series([
-            'TurnoutNonHispWhite',
-            'TurnoutNonHispBlack',
-            'TurnoutHispanic',
-            'TurnoutOther',
-            'PercOfElectorateNonHispWhite',
-            'PercOfElectorateNonHispBlack',
-            'PercOfElectorateHispanic',
-            'PercOfElectorateOther'])
+        # df's index is now non-standard, starting 
+        # with 1. Fix that:
+        df = df.reset_index()
+        
+        # Disambiguate population segment names: 
+        new_popsegment_names = pd.Series([
+        'TurnoutNonHispWhite',
+        'TurnoutNonHispBlack',
+        'TurnoutHispanic',
+        'TurnoutOther',
+        'PercOfElectorateNonHispWhite',
+        'PercOfElectorateNonHispBlack',
+        'PercOfElectorateHispanic',
+        'PercOfElectorateOther'], name='PopSegment')
 
-        print(df)
+        # Update works in-place:
+        df.update(new_popsegment_names)
+        
+        # Other election data is only from 2004;
+        # discard cols before that:
+        
+        df = df.drop(list(range(1986,2004,2)), axis=1)
 
+        # Get race/ethicity distributions for each
+        # State. Like:
+        #                          State  White Black Hispanic,...  Two Or More Races
+        # Region Election                 ...                   
+        # US     2008      United States  ...               0.02
+        # AL     2008            Alabama  ...               0.01
+        # AK     2008             Alaska  ...               0.07
+        # AZ     2008            Arizona  ...               0.02        
+        
+        race_population_df = self.import_race_distribution()
+        
+        # Combine columns other than White,Black,Hispanic into
+        # new column: 'Other': sum those cols:
+
+        col_set       = set(race_population_df.columns)
+        main_cols_set = set(['State', 'Year', 'White', 'Black', 'Hispanic'])
+        other_cols    = col_set.difference(main_cols_set)
+        
+        # Pacific islanders is tiny, and has too many nan:
+        other_cols.remove('Native Hawaiian/Other Pacific Islander')
+        
+        # Native Americans has some strings: "<.01"
+        # Replace those with 0.005
+        race_population_df = race_population_df.replace("<.01", 0.005)
+        
+        # Some numbers in race_population_df are strings.
+        # Fix that:
+        conversion_dict = {'White': float,
+                           'Black': float,
+                           'Hispanic': float,
+                           }
+        for col in other_cols:
+            conversion_dict[col] = float
+            
+        race_population_df = race_population_df.astype(conversion_dict)
+        
+        # Take the mean column-wise of the thin race cols: 
+        other_col_series  = race_population_df[other_cols].mean(axis=1)
+        
+        # Get the full set of columns to replace
+        # again:
+        other_cols = col_set.difference(main_cols_set)
+        race_population_df = race_population_df.drop(other_cols, axis=1)
+        race_population_df['Other'] = other_col_series
+        
+        # We now have:
+        #    race_population_df
+        #                             State  Year  White Black  Hispanic     Other
+        #    Region Election                                                      
+        #    US     2008      United States  2008   0.66  0.12      0.16  0.023333
+        #    AL     2008            Alabama  2008   0.69  0.26      0.03  0.010000
+        #    AK     2008             Alaska  2008   0.66  0.03      0.05  0.083333
+        #    AZ     2008            Arizona  2008   0.58  0.03      0.30  0.026667
+        #                    ...
+        
+        # And:
+        #     voter_turnout
+        #                              State  Year  ...  TotalIneligibleFelons  MeanPastTurnout
+        #     Region Election                       ...                                        
+        #     US     2004      United States  2004  ...             3158443.00         0.516321
+        #     AL     2004            Alabama  2004  ...               52664.00         0.500178
+        #     AK     2004             Alaska  2004  ...                8240.00         0.595952
+        #     AZ     2004            Arizona  2004  ...               71974.00         0.480923
+        #     AR     2004           Arkansas  2004  ...               42885.00         0.469521
+        #                    ...
+
+        # And:
+        #  self.voting_eligible_population
+        #     Region  Election
+        #     US      2004        2.034835e+08
+        #     AL      2004        3.292608e+06
+        #     AK      2004        4.521240e+05
+        #     AZ      2004        3.717055e+06
+        #                    ...
+        
+        # For each State, add the fraction of the 
+        # voting eligible population for each of 
+        # White, Black, Hispanic, and 'Other'
+
+        # We only have race population info back
+        # to 2008, so sacrifice 2004 and 2006 at
+        # this point:
+        
+        voter_turnout_trimmed = \
+            voter_turnout.drop(voter_turnout[voter_turnout['Year'] < 2008].index, 
+                                   axis=0)
+        
+        for race in ['White','Black','Hispanic','Other']:
+            race_pop_fraction = race_population_df[race] * self.voting_eligible_population
+            col_name = f'VEP_{race}'
+            voter_turnout_trimmed[col_name] = race_pop_fraction
+
+         
+        return voter_turnout_trimmed
+
+    #------------------------------------
+    # import_race_distribution 
+    #-------------------
+    
+    def import_race_distribution(self):
+        '''
+        
+        Return a df like:
+        
+                                     State  ...  Two Or More Races
+            Region Election                 ...                   
+            US     2008      United States  ...               0.02
+            AL     2008            Alabama  ...               0.01
+            AK     2008             Alaska  ...               0.07
+            AZ     2008            Arizona  ...               0.02        
+
+
+        where the columns are:
+            ['State', 'Year', 'White', 'Black', 'Hispanic',
+           'American Indian/Alaska Native', 'Asian',
+           'Native Hawaiian/Other Pacific Islander', 'Two Or More Races']
+       
+        and the index is like:
+       
+            MultiIndex([('US', 2008),
+                        ('AL', 2008),
+                        ('AK', 2008),
+                        ('AZ', 2008),
+                          ...
+                          
+        Data are from the public health site
+        https://www.kff.org/other/state-indicator/distribution-by-raceethnicity
+        and only go back to 2008.
+        
+        @return: a df with per-state breakdown of race percentages
+           by State. For years 2008/10/12/14/16/18.
+        @rtype: pd.DataFrame
+        
+        '''
+
+        race_df_all_elections = None
+        
+        for year in self.RACE_ETHNICITY_BY_STATE.keys():
+                
+            race_df = pd.read_csv(self.RACE_ETHNICITY_BY_STATE[year],
+                        skiprows=2,
+                        usecols=lambda col_name: col_name != 'notes'
+                        )
+            # Rows towards the end are notes embedded in
+            # the spreadsheet:
+            
+            race_df = race_df.dropna(axis='index', subset=['Total'])
+            
+            # Now we have:
+            # race_df
+            #                 Location  White Black  ...  Two Or More Races Total  Footnotes
+            # 0          United States   0.60  0.12  ...               0.03   1.0        1.0
+            # 1                Alabama   0.66  0.26  ...               0.02   1.0        NaN
+            # 2                 Alaska   0.60  0.03  ...               0.07   1.0        NaN
+            # 3                Arizona   0.54  0.04  ...               0.02   1.0        NaN
+            # 4               Arkansas   0.72  0.15  ...               0.03   1.0        NaN    
+            # 5             California   0.37  0.05  ...               0.03   1.0        NaN        
+            #           ...
+            
+            # Remove the footnotes:
+            race_df = race_df.drop('Footnotes', axis=1)
+            race_df = race_df.rename({'Location' : 'State'}, axis=1)
+            # Add a 'Year' column after the state:
+            state_col_int = race_df.columns.get_loc('State')
+            race_df.insert(state_col_int+1, 'Year', [year]*len(race_df))
+            
+            # Puerto Rico cannot vote, remove it:
+            race_df = race_df[race_df.State != 'Puerto Rico']
+            
+            # The 'Total' column is always 1 since all
+            # cols are percentages. Remove it:
+            
+            race_df = race_df.drop('Total', axis=1)
+    
+            # Create the standard index: State/Election
+            # to enable merging with other tables:
+            
+            state_abbrevs = self.state_abbrev_series(race_df.State)
+            region_series         = state_abbrevs
+            election_series       = race_df['Year'].copy()
+            region_series.name    = 'Region'
+            election_series.name  = 'Election'
+            race_df = race_df.set_index([region_series, election_series])
+            
+            if race_df_all_elections is None:
+                race_df_all_elections = race_df
+            else:
+                race_df_all_elections = pd.concat([race_df_all_elections, race_df])
+
+        return race_df_all_elections
 
     #------------------------------------
     # add_disaster_information 
@@ -854,8 +1080,9 @@ class StatePredictor(object):
         df['Disaster'] = 0
         df['DisasterName'] = ''
 
-        df.loc[('LA',2006), 'Disaster'] = 1
-        df.loc[('LA',2006), 'DisasterName'] = 'Katrina'
+        # We only go back to 2008:
+        #df.loc[('LA',2006), 'Disaster'] = 1
+        #df.loc[('LA',2006), 'DisasterName'] = 'Katrina'
 
         # Hurricane Sany, 2012:
         df.loc[('NY',2012), 'Disaster'] = 1
