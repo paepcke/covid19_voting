@@ -6,8 +6,13 @@ Created on Sep 4, 2020
 
 import csv
 import os
+import openpyxl  # for Excel exports
 
 from category_encoders.leave_one_out import LeaveOneOutEncoder
+from category_encoders.target_encoder import TargetEncoder
+from category_encoders.binary import BinaryEncoder
+
+
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import GridSearchCV
@@ -47,38 +52,56 @@ class StatePredictor(object):
                            }
     
     QUERY_TERM_FILES    = {
-                           2004: os.path.join(os.path.dirname(__file__),
+                           (2004,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2004_vote.csv'),      # 'vote'
-                           2006: os.path.join(os.path.dirname(__file__),
+                           (2006,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2006_vote.csv'),
-                           2008: os.path.join(os.path.dirname(__file__),
+                           (2008,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2008_vote.csv'),
-                           2010: os.path.join(os.path.dirname(__file__),
+                           (2010,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2010_vote.csv'),
-                           2012: os.path.join(os.path.dirname(__file__),
+                           (2012,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2012_vote.csv'),
-                           2014: os.path.join(os.path.dirname(__file__),
+                           (2014,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2014_vote.csv'),
-                           2016: os.path.join(os.path.dirname(__file__),
+                           (2016,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2016_vote.csv'),
-                           20018: os.path.join(os.path.dirname(__file__),
+                           (2018,'vote'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2018_vote.csv'),
-                           2004: os.path.join(os.path.dirname(__file__),
+                           (2004,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2004_elections.csv'),  # 'elections'
-                           2006: os.path.join(os.path.dirname(__file__),
+                           (2006,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2006_elections.csv'),
-                           2008: os.path.join(os.path.dirname(__file__),
+                           (2008,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2008_elections.csv'),
-                           2010: os.path.join(os.path.dirname(__file__),
+                           (2010,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2010_elections.csv'),
-                           2012: os.path.join(os.path.dirname(__file__),
+                           (2012,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2012_elections.csv'),
-                           2014: os.path.join(os.path.dirname(__file__),
+                           (2014,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2014_elections.csv'),
-                           2016: os.path.join(os.path.dirname(__file__),
+                           (2016,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2016_elections.csv'),
-                           20018: os.path.join(os.path.dirname(__file__),
+                           (2018,'elections'): os.path.join(os.path.dirname(__file__),
                                             '../../data/dataset_2018_elections.csv'),
+                           (2004,'voting'): os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2004_voting.csv'),     # 'voting'
+                           (2006,'voting'): os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2006_voting.csv'),
+                           (2008,'voting'): os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2008_voting.csv'),
+#********
+#                            (2010,'voting'): os.path.join(os.path.dirname(__file__),
+#                                             '../../data/dataset_2010_voting.csv'),
+#********
+                           (2012,'voting'): os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2012_voting.csv'),
+                           (2014,'voting'): os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2014_voting.csv'),
+                           (2016,'voting'): os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2016_voting.csv'),
+                           (2018,'voting'): os.path.join(os.path.dirname(__file__),
+                                            '../../data/dataset_2018_voting.csv'),
 
                           }
     VOTER_TURNOUT_DEMOGRAPHICS = os.path.join(os.path.dirname(__file__),
@@ -174,17 +197,28 @@ class StatePredictor(object):
         election_features = election_features.drop(columns=['DisasterName'])
         
         # Encode the Google query terms:
-        queries_encoded = self.leave_one_out_encode(election_features['Query'], y)
-        election_features['Query'] = queries_encoded
+        queries_encoded = self.binary_encode(election_features['Query'])
+        election_features = pd.concat([election_features, queries_encoded], axis=1)
+        election_features = election_features.drop('Query', axis=1)
         
-        # Same for the WeekDay col ('Mon', 'Tue',...):
-        week_day_encoded = self.leave_one_out_encode(election_features['WeekDay'], y)
+        # Since weekdays do have some interval characteristics,
+        # just encode them as 0,1,...6:
+        week_day_encoded = self.ordinal_encode(election_features['WeekDay'])
         election_features['WeekDay'] = week_day_encoded
 
         # Get (again, just in case) the values in column that we are to predict:
         y = election_features[label_col]
-        # Remove that col from election_features:
-        X = election_features.drop(columns=label_col)
+        
+        # Remove that col from election_features.
+        # Also, some features are meaningless, or closely
+        # related to some other feature. Remove
+        # those:
+
+        X = election_features.drop(columns=[label_col,
+                                            'StateCode',
+                                            'TotalBallotsCounted'
+                                            ],
+                                            axis=1)
         
         # Save the feature names (without the label col)
         # before turning X into an np array:
@@ -195,15 +229,24 @@ class StatePredictor(object):
         # available to other methods:
         self.election_features = election_features
         
-        #**********
-        self.explore_features()
-        #**********
+        #*****
+        election_features.to_pickle(os.path.join(os.path.dirname(__file__),
+                                       '../../data/SavedFrames/features.pickle')
+                                    )
+        election_features.to_excel(os.path.join(os.path.dirname(__file__),
+                                       '../../data/SavedFrames/features.xlsx')
+                                    )
+        #*****
         
         # RandomForestClassivier/Regressor want
         # pure numpies:
         self.X = X.reset_index(drop=True).to_numpy(dtype=float)
         self.y = y.reset_index(drop=True).to_numpy(dtype=float)
 
+        #**********
+        #self.explore_features(X,y)
+        #**********
+        
         self.log.info("Creating RandomForestRegressor...")
 #         self.rand_forest = RandomForestRegressor(n_estimators=1,
 #                                                  max_depth=2,
@@ -275,14 +318,15 @@ class StatePredictor(object):
     # explore_features 
     #-------------------
     
-    def explore_features(self):
-        
+    def explore_features(self, X, y):
+
+        all_matrix = pd.concat([y,X],axis=1)
         plt.tight_layout()
-        plt.figure()
-        plt.xticks(rotate=45)
-        cor = self.election_features.corr()
-        sns.heatmap(cor, annot=True, cmap=plt.cm.Reds)
-        plt.show()
+        _fig, ax = plt.subplots(figsize=(9,6))
+        cor = all_matrix.corr()
+        heatmap = sns.heatmap(cor, annot=True, cmap=plt.cm.Reds, ax=ax)
+        heatmap.set_xticklabels(heatmap.get_xticklabels(), rotation=45)
+        plt.show() 
 
 
     #------------------------------------
@@ -391,9 +435,9 @@ class StatePredictor(object):
         '''
 
         search_query_df = None
-        for year in search_data_dict.keys():
+        for (year, query_term) in search_data_dict.keys():
             
-            csv_file = search_data_dict[year]
+            csv_file = search_data_dict[(year,query_term)]
             df = pd.read_csv(csv_file,
                              names=['Mon','Tue','Wed','Thu','Fri','Sat','Sun',
                                     'StateCode', 'Query'],
@@ -916,6 +960,27 @@ class StatePredictor(object):
         race_population_df = race_population_df.drop(other_cols, axis=1)
         race_population_df['Other'] = other_col_series
         
+        # Race populations for some State(s) for some year(s)
+        # are NaN. To fix:
+        #   o Get each State's rows by themselves, like:
+        #                State  Year  White  Black  Hispanic   Other
+        #     Group Arkansas:
+        #       AK 2004    ...  2004   0.5    0.2    0.5       0.002
+        #       AK 2006    ...  2006   0.3    0.5    0.1       0.005
+        #       AK 2008    ...  2008   0.5    NaN    0.5       0.006
+        #     Group Alabama:
+        #       AL 2004    ...  2004   0.5    0.2    0.5       0.002
+        #       AL 2006    ...  2006   NaN    0.5    0.1       0.005
+        #       AL 2008    ...  2008   0.1    0.6    0.5       0.006
+        #
+        #   o Within each group, find NaNs and replace them 
+        #     with the mean of the non-NaN numbers in the same
+        #     column and group. So the NaN in the Black column
+        #     will be (0.2 + 0.5) / 2 = 0.35. And the NaN in 
+        #     the White column will be (0.5+0.1)/2 = 0.6
+        state_groups = race_population_df.groupby(level='Region')
+        race_population_df = state_groups.fillna(state_groups.mean())
+        
         # We now have:
         #    race_population_df
         #                             State  Year  White Black  Hispanic     Other
@@ -1112,6 +1177,73 @@ class StatePredictor(object):
 
         return df
 
+    #------------------------------------
+    # target_encode
+    #-------------------
+    
+    def target_encode(self, cat_col, label_col):
+        '''
+        Given a column with values for a categorical
+        variable, and a target col (i.e. the col that is
+        to be predicted), return a column with the 
+        cat_col values target encoded. 
+        
+        This scheme has the all occurrences of a
+        category value have the same encoding. This
+        may lead to data leakage.
+         
+        @param cat_col: categorical values
+        @type cat_col: pd.Series
+        @param label_col: values to be predicted
+        @type label_col: pd.Series
+        @return target encoded values
+        @rtype: pd.Series
+        '''
+
+        # Sigma adds normal noise to the encodings to 
+        # prevent overfitting:
+        enc = TargetEncoder(verbose=1, cols=cat_col.name)
+
+        enc = enc.fit(cat_col, label_col)
+        # The transform() method calls the encoder's
+        # transform_leave_one_out() method:
+        res = enc.transform(cat_col, label_col)
+        return res
+
+    #------------------------------------
+    # binary_encode
+    #-------------------
+    
+    def binary_encode(self, cat_col):
+        enc = BinaryEncoder(verbose=1,cols=cat_col.name)
+        enc = enc.fit(cat_col)
+        res = enc.transform(cat_col)
+        return res
+    
+    #------------------------------------
+    # ordinal_encode 
+    #-------------------
+
+    def ordinal_encode(self, cat_col):
+        '''
+        Return a new column where categories
+        are encoded as successive integers
+        by order of appearance in the given 
+        cat_col. Ex.: given ['Mon','Mon','Tue','Wed']
+        would return [0,0,1,2]
+        
+        @param cat_col: column of categical values
+        @type cat_col: pd.Series
+        @return: series with values replaced
+        @rtype: pd.Series
+        '''
+        
+        categories = cat_col.unique()
+        replace_dict = {key : val for (key,val) in zip(categories, range(len(categories)))}
+        res = cat_col.replace(replace_dict)
+        return res
+
+    
     #------------------------------------
     # leave_one_out_encode 
     #-------------------
