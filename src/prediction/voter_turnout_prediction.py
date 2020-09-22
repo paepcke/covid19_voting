@@ -4,29 +4,26 @@ Created on Sep 4, 2020
 @author: paepcke
 '''
 
-import csv
 import os
-import openpyxl  # for Excel exports
 
+from category_encoders.binary import BinaryEncoder
 from category_encoders.leave_one_out import LeaveOneOutEncoder
 from category_encoders.target_encoder import TargetEncoder
-from category_encoders.binary import BinaryEncoder
-
-
+from matplotlib import rcParams
+import openpyxl  # for Excel exports
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import mean_squared_error
 from sklearn.metrics import make_scorer
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import train_test_split
 
 import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib import rcParams
-
-import pandas as pd
 import numpy as np
-
+import pandas as pd
+import seaborn as sns
 from utils.logging_service import LoggingService
+from prediction.covid_utils import CovidUtils
+
 
 class StatePredictor(object):
     '''
@@ -121,6 +118,22 @@ class StatePredictor(object):
                            2018: os.path.join(os.path.dirname(__file__),
                                             '../../data/raceEthnicityByState2018.csv')
                            }
+    
+    AGE_BY_STATE =         {
+                           2008: os.path.join(os.path.dirname(__file__),
+                                            '../../data/age2008.csv'),
+                           2010: os.path.join(os.path.dirname(__file__),
+                                            '../../data/age2010.csv'),
+                           2012: os.path.join(os.path.dirname(__file__),
+                                            '../../data/age2012.csv'),
+                           2014: os.path.join(os.path.dirname(__file__),
+                                            '../../data/age2014.csv'),
+                           2016: os.path.join(os.path.dirname(__file__),
+                                            '../../data/age2016.csv'),
+                           2018: os.path.join(os.path.dirname(__file__),
+                                            '../../data/age2018.csv')
+                           }
+
 
     RANDOM_SEED = 42
 
@@ -134,6 +147,7 @@ class StatePredictor(object):
         Constructor
         '''
         self.log = LoggingService()
+        self.utils = CovidUtils()
         
         # Get charts to layout properly (e.g. show
         # all of the axis labels:
@@ -549,78 +563,6 @@ class StatePredictor(object):
         search_query_df_folded.index = new_idx
         return search_query_df_folded
     
-    #------------------------------------
-    # import_state_mappings
-    #-------------------
-    
-    def import_state_mappings(self):
-        '''
-        Initializes States related lookup dicts:
-        
-        1. self.state_codings: mapping the integer codes for States
-           to the 2-letter State names:
-        
-           ID    State
-           {0   :   AL
-           1   :   AK
-           
-           50  : 'WY'
-           51  : 'US'    # <---- Added as if a State
-              ...}
-
-        2. A reverse dict: State --> StateCode:
-           self.reverse_state_codings 
-           
-           {'AL'   :   0
-            'AK'   :   1
-           
-            'WY'  : 50
-            'US'  : 51    # <---- Added as if a State
-              ...}
-
-
-        3. self.state_abbrevs: long State names to 2-letter abbreviations
-        
-           LongName  :   Abbrev
-          {'New York' :   'NY'
-               ...}
-        
-        @return: dataframe with mapping
-        @rtype: pd.DataFrame 
-        '''
-        
-        # Integer state codes to two-letter abbreviation:
-        self.state_codings = {}
-        
-        # The 'encodings...' is needed because the CSV
-        # file seems to include a leading '\ufeff' to 
-        # indicate Endianness. Specifying encoding 
-        # has Python remove that indicator:
-        
-        with open(os.path.join(self.data_dir, 'states.csv'), 'r', encoding='utf-8-sig') as fd:
-            reader = csv.reader(fd)
-            for (coding, state_abbrev) in reader:
-                self.state_codings[int(coding)] = state_abbrev
-                
-        # Add the US 'State' after the last real State:
-        self.state_codings[max(self.state_codings.keys()) + 1] = 'US'
-        
-        # Reverse state/code lookup:
-        self.reverse_state_codings = {}
-        for state_code, state in self.state_codings.items():
-            self.reverse_state_codings[state] = state_code
-
-        # Long State name to 2-letter abbreviation:
-        #
-        #    LongName    Abbrev
-        #   "New York"    "NY"
-        #           ...
-
-        self.state_abbrevs = {}
-        with open(os.path.join(self.data_dir, 'state_abbrevs.csv'), 'r', encoding='utf-8-sig') as fd:
-            reader = csv.reader(fd)
-            for (longName, abbrev) in reader:
-                self.state_abbrevs[longName] = abbrev
 
     #------------------------------------
     # import_voter_turnout 
@@ -1381,18 +1323,6 @@ class StatePredictor(object):
         
         return voting_rate_VAP
 
-    #------------------------------------
-    # state_abbrev_series 
-    #-------------------
-
-    def state_abbrev_series(self, state_name_series):
-        # One 'state' name in the voter turnout Excel
-        # sheets is 'United States', leave that abbrev
-        # NaN to conform with the newer turnout sheets:
-        
-        res = state_name_series.apply(lambda state_nm: 'US' \
-                                      if state_nm == 'United States' else self.state_abbrevs[state_nm])
-        return res
 
 # ------------------------ Main ------------
 if __name__ == '__main__':
