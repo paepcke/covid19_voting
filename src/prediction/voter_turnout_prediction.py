@@ -4,7 +4,11 @@ Created on Sep 4, 2020
 @author: paepcke
 '''
 
-import os
+import os,sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 
 from category_encoders.binary import BinaryEncoder
 from category_encoders.leave_one_out import LeaveOneOutEncoder
@@ -17,13 +21,13 @@ from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import train_test_split
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from utils.logging_service import LoggingService
-from prediction.covid_utils import CovidUtils
 
+from prediction.covid_utils import CovidUtils
+from population_age_transformer import PopulationAgeTransformer
+from visualization import Visualizer
 
 class StatePredictor(object):
     '''
@@ -158,7 +162,7 @@ class StatePredictor(object):
         self.data_dir = os.path.join(os.path.dirname(__file__), '../../data')
         
         # Initialize various mappings (State names to their abbrevs, etc.),
-        self.import_state_mappings()
+        self.utils.import_state_mappings()
         
         # Import voter turnout:
         self.log.info("Importing voter turnout data (Election Project)...")
@@ -195,6 +199,10 @@ class StatePredictor(object):
         self.log.info("Adding disaster history...")
         election_features = self.add_disaster_information(election_features)
         self.log.info("Done adding disaster history.")
+        
+        self.log.info("Adding age distribution by State...")
+        election_features = PopulationAgeTransformer(self.AGE_BY_STATE).fit_transform(election_features)
+        self.log.info("Done adding age distribution by State.")
 
         # Remove columns not needed, and encode 
         # categorical columns:
@@ -234,39 +242,32 @@ class StatePredictor(object):
                                             ],
                                             axis=1)
         
-        # Save the feature names (without the label col)
-        # before turning X into an np array:
+        # Save the feature names (without the label col),
+        # and the multiindex before having to turn
+        # X into an np array:
         self.feature_names = X.columns
+        self.feature_index = X.index
         self.target_name   = label_col
+        self.X_df          = X.copy()
+        self.y_series      = y.copy()
         
         # Make the final feature vectors (incl. label_col)
         # available to other methods:
         self.election_features = election_features
         
         #*****
-        election_features.to_pickle(os.path.join(os.path.dirname(__file__),
-                                       '../../data/SavedFrames/features.pickle')
-                                    )
-        election_features.to_excel(os.path.join(os.path.dirname(__file__),
-                                       '../../data/SavedFrames/features.xlsx')
-                                    )
+#         election_features.to_pickle(os.path.join(os.path.dirname(__file__),
+#                                        '../../data/SavedFrames/features.pickle')
+#                                     )
+#         election_features.to_excel(os.path.join(os.path.dirname(__file__),
+#                                        '../../data/SavedFrames/features.xlsx')
+#                                     )
         #*****
         
-        # RandomForestClassivier/Regressor want
-        # pure numpies:
-        self.X = X.reset_index(drop=True).to_numpy(dtype=float)
-        self.y = y.reset_index(drop=True).to_numpy(dtype=float)
-
         #**********
-        #self.explore_features(X,y)
+        #self.correlation_matrix(X,y)
         #**********
-        
         self.log.info("Creating RandomForestRegressor...")
-#         self.rand_forest = RandomForestRegressor(n_estimators=1,
-#                                                  max_depth=2,
-#                                                  random_state=self.RANDOM_SEED
-#                                                  )
-
         self.rand_forest = RandomForestRegressor()
 
         self.log.info("Done creating RandomForestRegressor.")
@@ -278,17 +279,45 @@ class StatePredictor(object):
     def run(self):
         
         # Split the data into training and testing sets
-        train_features, test_features, train_labels, test_labels = \
-            train_test_split(self.X, self.y, test_size = 0.25, random_state = 42)
+        (self.train_features_df, 
+        self.test_features_df, 
+        self.train_labels_series, 
+        self.test_labels_series) = \
+            train_test_split(self.X_df, self.y_series, test_size = 0.25, random_state = 42)
 
-        self.optimize_hyperparameters(train_features, train_labels)
+        # RandomForestClassivier/Regressor want
+        # pure numpies:
+        self.X = self.train_features_df.reset_index(drop=True).to_numpy(dtype=float)
+        self.y = self.train_labels_series.reset_index(drop=True).to_numpy(dtype=float)
+        self.X_test = self.test_features_df.reset_index(drop=True).to_numpy(dtype=float)
+        self.y_test = self.test_labels_series.reset_index(drop=True).to_numpy(dtype=float)
+
+        self.optimize_hyperparameters(self.X, self.y)
 
         self.log.info("Training the regressor...")
-        self.rand_forest.fit(train_features, train_labels)
+        self.rand_forest.fit(self.X, self.y)
         self.log.info("Done training the regressor.")
 
-        predictions = self.rand_forest.predict(test_features)
-        self.evaluate_model(predictions, test_labels)
+        predictions = self.rand_forest.predict(self.X_test)
+        # Turn predictions back into a Series:
+        pred_series = pd.Series(predictions,
+                        name='VoterTurnout',
+                        index=self.test_labels_series.index)
+        
+        # There are multiple copies of the TurnoutRate 
+        # for each (<State>,<year>) pair. Get the unique
+        # values by grouping by 'Region' and 'Election'.
+        # Each group will have identical VoterTurnout values.
+        # Get get just one, take the group means. Since values
+        # are identical within each group, no data are lost:
+        
+        gb_pred = pred_series.groupby(['Region','Election'])
+        pred_series_unique = gb_pred.mean()
+        gb_truth = self.test_labels_series.groupby(['Region','Election'])
+        truth_series_unique = gb_truth.mean()
+        
+        
+        self.evaluate_model(pred_series_unique, truth_series_unique)
 
     #------------------------------------
     # optimize_hyperparameters 
@@ -296,8 +325,10 @@ class StatePredictor(object):
     
     def optimize_hyperparameters(self, train_X, train_y):
         
-        tuned_parameters = {'n_estimators' : 1+np.array(range(10)),
-                            'max_depth'    : 1+np.array(range(10))
+        tuned_parameters = {#****'n_estimators' : 1+np.array(range(10)),
+                            'n_estimators' : 1+np.array(range(10)),
+                            #****'max_depth'    : 1+np.array(range(10))
+                            'max_depth'    : 1+np.array(range(3))
                             }
         scorer = make_scorer(mean_squared_error, greater_is_better=False)
         clf = GridSearchCV(
@@ -328,20 +359,6 @@ class StatePredictor(object):
         #print(f'Best params: {clf.best_params_}')
         #print(f'Best score: {clf.best_score_}')
 
-    #------------------------------------
-    # explore_features 
-    #-------------------
-    
-    def explore_features(self, X, y):
-
-        all_matrix = pd.concat([y,X],axis=1)
-        plt.tight_layout()
-        _fig, ax = plt.subplots(figsize=(9,6))
-        cor = all_matrix.corr()
-        heatmap = sns.heatmap(cor, annot=True, cmap=plt.cm.Reds, ax=ax)
-        heatmap.set_xticklabels(heatmap.get_xticklabels(), rotation=45)
-        plt.show() 
-
 
     #------------------------------------
     # train_model 
@@ -370,6 +387,14 @@ class StatePredictor(object):
                                         ),2)
         
         self.log.info(f'RMSE: {rmse}')
+
+        # Check feature importance:
+        viz = Visualizer()
+        #*****viz.feature_importance(self.rand_forest, self.feature_names)
+        viz.real_and_estimated(self.election_features.index.unique('Election'), 
+                               predictions, 
+                               test_labels)
+
 
     #------------------------------------
     # import_search_data 
@@ -506,7 +531,7 @@ class StatePredictor(object):
                 wk_summed = that_wk_only[['Mon','Tue','Wed','Thu','Fri','Sat','Sun']].sum(axis=0)
                 
                 # Add the StateCode, Query, and Week:
-                wk_summed['StateCode']  = self.reverse_state_codings['US']
+                wk_summed['StateCode']  = self.utils.reverse_state_codings['US']
                 wk_summed['Query']      = that_wk_only.loc[wk,'Query']
                 wk_summed['Year']       = year
                 wk_summed['Week']       = wk
@@ -553,7 +578,8 @@ class StatePredictor(object):
         # Get from the State code to the long State name to the State abbrev:
 
         state_codes   = search_query_df_folded['StateCode']
-        idx_state = pd.Series([self.state_codings[state_code] for state_code in state_codes])
+        idx_state = pd.Series([self.utils.state_codings[state_code] 
+                               for state_code in state_codes])
         idx_year  = search_query_df_folded['Year']
         idx_state.name = 'Region'
         idx_year.name = 'Election'
@@ -720,7 +746,7 @@ class StatePredictor(object):
         # 'State' and 'Year', but we rename them
         # to 'Region' and 'Election'
         
-        state_abbrevs = self.state_abbrev_series(voter_turnout_df.State)
+        state_abbrevs = self.utils.state_abbrev_series(voter_turnout_df.State)
         region_series         = state_abbrevs
         election_series       = voter_turnout_df['Year'].copy()
         region_series.name    = 'Region'
@@ -1055,7 +1081,7 @@ class StatePredictor(object):
             # Create the standard index: State/Election
             # to enable merging with other tables:
             
-            state_abbrevs = self.state_abbrev_series(race_df.State)
+            state_abbrevs = self.utils.state_abbrev_series(race_df.State)
             region_series         = state_abbrevs
             election_series       = race_df['Year'].copy()
             region_series.name    = 'Region'

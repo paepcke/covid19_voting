@@ -38,11 +38,8 @@ class PopulationAgeTransformer(BaseEstimator, TransformerMixin):
                                                                        'Footnotes']
                              )
 
-        for year in file_dict.keys():
-
-            # Remove all rows below Wyoming; they are notes
-            wyoming_idx = df.index[df['Location'] == 'Wyoming'].tolist()[0]
-            df = df[df.index <= wyoming_idx]
+            # Make the column headers legal Python identifiers,
+            # and change 'Location' to 'State':
             df = df.rename({'Location' : 'State',
                             'Adults 19-25' : 'Age_19_25',
                             'Adults 26-34' : 'Age_26_34',
@@ -51,15 +48,23 @@ class PopulationAgeTransformer(BaseEstimator, TransformerMixin):
                             '65+'          : 'Age_65_up'
             }, axis=1)
 
-            # Create the Year col after the State:
-            dest = df.columns.get_loc('State')
-            df.insert(dest+1, 'Year', year)
-            
+            # Remove all rows below Wyoming; they are notes
+            wyoming_idx = df.loc[df['State'] == 'Wyoming'].index[0]
+            df = df[df.index <= wyoming_idx]
+
             # Create a column of State abbreviations,
             # and make a multiindex (<state_abbrev>, <year>):
             abbrevs = self.utils.state_abbrev_series(df.State)
-            indx = list(zip(abbrevs, [year]*len(abbrevs)))
+            
+            indx = pd.MultiIndex.from_tuples(zip(abbrevs, 
+                                                 [year]*len(abbrevs)
+                                                 ), 
+                                                 names=['Region','Election'])
             df.index = indx
+            # No longer need State column, b/c we have
+            # that info in the index:
+            df = df.drop('State', axis=1)
+
             if self.all_elections_df is None:
                 self.all_elections_df = df
             else:
@@ -98,5 +103,5 @@ class PopulationAgeTransformer(BaseEstimator, TransformerMixin):
         @rtype: pd.DataFrame
         '''
         
-        new_X = pd.concat([X.copy(), self.all_elections_df], axis=1)
+        new_X = X.join(self.all_elections_df)
         return new_X
