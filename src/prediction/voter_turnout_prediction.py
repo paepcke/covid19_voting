@@ -386,14 +386,24 @@ class StatePredictor(object):
                                         squared=False
                                         ),2)
         
-        self.log.info(f'RMSE: {rmse}')
+        self.log.info(f'RMSE against across all states: {rmse}')
+        
+        # Get RMSE between voter turnout prediction and truth
+        # from predicting voter turnout for the elections within
+        # each State:
+        self.log.info('Computing RMSE values per voting region...')
+        rmse_values = self.rmse_statewise(predictions, test_labels)
+        self.log.info('Done computing RMSE values per voting region.')
 
         # Check feature importance:
         viz = Visualizer()
         #*****viz.feature_importance(self.rand_forest, self.feature_names)
-        viz.real_and_estimated(self.election_features.index.unique('Election'), 
-                               predictions, 
-                               test_labels)
+        # Visualize panel of states, each chart
+        # showing a truth vs. prediction scatterplot:
+        
+        viz.real_and_estimated(predictions, 
+                               test_labels,
+                               rmse_values)
 
 
     #------------------------------------
@@ -1146,6 +1156,89 @@ class StatePredictor(object):
         return df
 
     #------------------------------------
+    # rmse_statewise
+    #-------------------
+    
+    def rmse_statewise(self, predicted, truth):
+        '''
+        Given two series of voter turnouts by state,
+        return RMSE for each state. Expected for
+        each of the two series:
+
+             Region Election              
+             AK     2008          0.661664
+                    2010          0.524586
+                    2012          0.524586
+                    2014          0.429512
+                    2016          0.615751
+                    2018          0.534943
+             ...                       ...
+             WY     2010          0.501196
+                    2012          0.501196
+                    2014          0.406122
+                    2016          0.595712
+                    2018          0.514905
+                    
+        where the column is VoterTurnout (predicted or true)
+        
+        For each State separately the RMSE between 
+        prediction and truth is computed. Returns a 
+        Series like:
+        
+            Region
+            AK    0.056036
+            AL    0.057293
+            AR    0.074859
+            AZ    0.050861
+            
+        @param predicted: predicted voter turnout per State per election
+        @type predicted: pd.Series
+        @param truth: actual voter turnout per State per election
+        @type truth: pd.Series
+        @return RMSE between prediction and truth within each State
+        '''
+        # # Get:
+        #                       VoterTurnout  VoterTurnout
+        #      Region Election                            
+        #      AK     2008          0.661664      0.683000
+        #             2010          0.524586      0.529000
+        #             2012          0.524586      0.589000
+        #             2014          0.429512      0.548000
+        #             2016          0.615751      0.614662
+        #             2018          0.534943      0.548186
+        #      ...                       ...           ...
+        #      WY     2010          0.501196      0.460000
+        #             2012          0.501196      0.590000
+        #             2014          0.406122      0.397000
+        #             2016          0.595712      0.602279
+        #             2018          0.514905      0.478610
+
+        combo_pred_truth = pd.concat([predicted,truth], axis=1)
+        combo_pred_truth.columns = ['TurnoutPred', 'TurnoutTruth']
+
+        # Function to apply when given a dataframe like the 
+        # combo above, but with only the data of one State
+        # at a time:
+        def rmse_by_state(pred_truth_one_state_df):
+            rmse = mean_squared_error(pred_truth_one_state_df['TurnoutPred'],
+                                      pred_truth_one_state_df['TurnoutTruth'],
+                                      squared=False
+                                      )
+            return rmse
+
+        grp = combo_pred_truth.groupby(by=['Region'])
+        
+        # Get:
+        #     Region
+        #     AK    0.056036
+        #     AL    0.057293
+        #     AR    0.074859
+        #          ...
+
+        rmse_df = grp.apply(rmse_by_state)
+        return rmse_df
+
+    #------------------------------------
     # target_encode
     #-------------------
     
@@ -1367,3 +1460,4 @@ if __name__ == '__main__':
 #     args = parser.parse_args();
 
     StatePredictor().run()
+    input("Press ENTER to quit...")

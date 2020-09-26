@@ -9,6 +9,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from sklearn.metrics import mean_squared_error
+
 import matplotlib.patches as mpatches
 from utils.logging_service import LoggingService
 
@@ -70,22 +72,44 @@ class Visualizer(object):
     # real_and_estimated
     #-------------------
     
-    def real_and_estimated(self, xlabels, predicted, truth):
+    def real_and_estimated(self, predicted, truth, rmse_values):
         '''
-        Creates line chart with two lines: true
-        voter turnout and predicted 
-        voter turnout.
+        Creates a scatter plot with two lines: true
+        voter turnout and predicted voter turnout
+        for each state. Shows all charts within one
+        panel. Each of predicted and truth are expected
+        to look like this:
+
+         Region Election              
+         AK     2008          0.661664
+                2010          0.524586
+                2012          0.524586
+                2014          0.429512
+                2016          0.615751
+                2018          0.534943
+         ...                       ...
+         WY     2010          0.501196
+                2012          0.501196
+
+        RMSE values are expected like this:
         
-        @param forest: fully fit random forest
-        @type forest: RandomForestRegressor
-        @param X_test: feature matrix to use for prediction
-        @type X_test: pd.DataFrame
-        @param y_test: true voter turnout for each election
-        @type y_test: pd.Series
+         Region
+         AK    0.056036
+         AL    0.057293
+         AR    0.074859
+         AZ    0.050861
+             ...
+        
+        @param predicted: predicted voter turnout for each
+            state and election
+        @type predicted: pd.Series
+        @param truth: the actual turnouts
+        @type truth: pd.Series
+        @param rmse_values: the RMSE from comparing predicted
+            with true voter turnout within each voting Region.
+        @type rmse_values: pd.Series
         '''
-        
-        # Get the prediction turnouts:
-        
+
         fig = plt.figure()
         fig.tight_layout()
         ax  = fig.add_subplot(1,1,1) # chart at grid coords 1,1, axes # 1
@@ -110,8 +134,6 @@ class Visualizer(object):
                           for (col,election) in patch_info]
 
         fig1, ax_plots = plt.subplots(13,4,sharex=True, sharey=True)
-        
-        #***fig1.tight_layout()
         fig1.set_size_inches(10,20)
         
         states = pd.Series([idx_entry[0] for idx_entry in truth.index]).unique()
@@ -136,11 +158,19 @@ class Visualizer(object):
                              state_truths_all_elections)
                 
                 # Add the State abbrev in the lower right:
-                _txt_obj = curr_ax.text(0.8, 
-                                        0.1,
-                                        state,
-                                        transform=curr_ax.transAxes
-                                        )
+                curr_ax.text(0.8, 
+                             0.1,
+                             state,
+                             transform=curr_ax.transAxes
+                             )
+
+                # Add the respective RMSE in the upper left:
+                curr_ax.text(0.05, 
+                             0.75,
+                             f'RMSE: {round(rmse_values[state],2)}',
+                             transform=curr_ax.transAxes
+                             )
+
 
         # Put x-axis label underneath the 2nd axes 
         # of the last line:
@@ -156,25 +186,24 @@ class Visualizer(object):
         # take as much horizontal space as needed:
         ax_plots[0,1].legend(handles=legend_patches,
                              title='Election',
-                             mode='expand',
                              ncol=2,
-                             loc=(-0.1,1.1)      # (x,y in units of the axes): Upper left corner
+                             # (x,y in units of the axes): Upper left corner:
+                             loc=(-0.1,   # x
+                                  1.1)    # y
                              )
         
         # Add explanation for the lines in each subplot:
-        ax_plots[0,1].text(0.8, 
+        ax_plots[0,1].text(0.9, 
                            1.0, 
                            "Line: perfect prediction", 
                            fontsize='large'
                            )
         # Figure title:
-        ax_plots[0,1].text(0.8, 1.4, "Voter Turnout Prediction by State", fontsize='x-large', fontweight='bold')
+        ax_plots[0,1].text(0.9, 1.4, "Voter Turnout Prediction by State", fontsize='x-large', fontweight='bold')
 
         self.log.info("Done creating 13x4 scatter plots for model performance per State and election.")
         self.log.info("Drawing scatter plots...")
         plt.show()
         self.log.info("Done drawing scatter plots.")
-        print('foo')
-        
-        
+
 
