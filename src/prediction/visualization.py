@@ -9,8 +9,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.metrics import mean_squared_error
-
 import matplotlib.patches as mpatches
 from utils.logging_service import LoggingService
 
@@ -110,17 +108,6 @@ class Visualizer(object):
         @type rmse_values: pd.Series
         '''
 
-        fig = plt.figure()
-        fig.tight_layout()
-        ax  = fig.add_subplot(1,1,1) # chart at grid coords 1,1, axes # 1
-        
-        self.log.info("Creating scatter plot of overall errors...")
-        ax.scatter(truth, predicted)
-        self.log.info("Done creating scatter plot of overall errors.")
-        
-        ax.set_xlabel('True Voter Turnout')
-        ax.set_ylabel('Predicted Voter Turnout')
-        
         # Now a grid of model performance by State:
 
         election_colors = pd.Series(['blue', 'green', 'red', 'cyan', 'magenta', 'black'],
@@ -207,3 +194,21 @@ class Visualizer(object):
         self.log.info("Done drawing scatter plots.")
 
 
+    #------------------------------------
+    # error_scatterplot
+    #-------------------
+    
+    def error_scatterplot(self, truth, predicted):
+        
+        fig = plt.figure()
+        fig.tight_layout()
+        ax  = fig.add_subplot(1,1,1) # chart at grid coords 1,1, axes # 1
+        
+        self.log.info("Creating scatter plot of overall errors...")
+        ax.scatter(truth, predicted)
+        self.log.info("Done creating scatter plot of overall errors.")
+        
+        ax.set_xlabel('True Voter Turnout')
+        ax.set_ylabel('Predicted Voter Turnout')
+
+        fig.show()

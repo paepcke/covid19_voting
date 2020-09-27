@@ -4,11 +4,8 @@ Created on Sep 4, 2020
 @author: paepcke
 '''
 
-import os,sys
-
-sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-
+import os, sys
+import pickle
 
 from category_encoders.binary import BinaryEncoder
 from category_encoders.leave_one_out import LeaveOneOutEncoder
@@ -23,11 +20,18 @@ from sklearn.model_selection import train_test_split
 
 import numpy as np
 import pandas as pd
-from utils.logging_service import LoggingService
-
-from prediction.covid_utils import CovidUtils
 from population_age_transformer import PopulationAgeTransformer
+from prediction.covid_utils import CovidUtils
+from utils.logging_service import LoggingService
 from visualization import Visualizer
+
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+
+
+
 
 class StatePredictor(object):
     '''
@@ -159,8 +163,9 @@ class StatePredictor(object):
 
 
         # Directory with various data files:
-        self.data_dir = os.path.join(os.path.dirname(__file__), '../../data')
-        
+        self.script_dir = os.path.dirname(__file__) 
+        self.data_dir   = os.path.join(self.script_dir, '../../data')
+
         # Initialize various mappings (State names to their abbrevs, etc.),
         self.utils.import_state_mappings()
         
@@ -244,7 +249,10 @@ class StatePredictor(object):
         
         # Save the feature names (without the label col),
         # and the multiindex before having to turn
-        # X into an np array:
+        # X into an np array. Same with other
+        # elements in the dataframe structure:
+        self.election_years = pd.Series(X.index.get_level_values(1).unique(),
+                                        dtype=int)
         self.feature_names = X.columns
         self.feature_index = X.index
         self.target_name   = label_col
@@ -278,52 +286,139 @@ class StatePredictor(object):
 
     def run(self):
         
+        for election_yr in self.election_years:
+            
+            # For a given election, we can only use
+            # feature values from the past, or from 
+            # measurements taken just before the election,
+            # like query counts. But not from the future:
+            
+            past_only_features = self.X_df.query(f"Election <= {election_yr}")
+            
+            # For Series, query() does not work. Use masks instead:
+            
+            mask = self.y_series.index.get_level_values('Election') <= election_yr
+            past_only_target   = self.y_series[mask]
+
+            (pred_series_unique, 
+             truth_series_unique) = self.predict_one_election(past_only_features, 
+                                                              past_only_target) 
+        
+        self.evaluate_model(pred_series_unique, truth_series_unique)
+        
+    #------------------------------------
+    # predict_one_election 
+    #-------------------
+
+    def predict_one_election(self, X_df, y_series):
+        '''
+        Get features X_df like:
+        
+                             Year  NonCitizenPerc  ...  Query_1  Query_2
+            Region Election                        ...                  
+            AK     2008      2008        0.037000  ...        0        1
+                   2008      2008        0.037000  ...        0        1
+                   2008      2008        0.037000  ...        0        1
+                   2008      2008        0.037000  ...        1        0
+                   2008      2008        0.037000  ...        1        0
+            ...               ...             ...  ...      ...      ...
+            WY     2018      2018        0.024732  ...        1        1
+                   2018      2018        0.024732  ...        1        1
+
+        and true turnout values as:
+        
+            Region  Election
+            AK      2008        0.68300
+                    2008        0.68300
+                    2008        0.68300
+                    2008        0.68300
+                    2008        0.68300
+                                 ...   
+            WY      2018        0.47861
+                    2018        0.47861
+
+        
+
+        @param X_df:
+        @type X_df:
+        @param y_series:
+        @type y_series:
+        @param election_year:
+        @type election_year:
+        '''
+
         # Split the data into training and testing sets
         (self.train_features_df, 
-        self.test_features_df, 
-        self.train_labels_series, 
-        self.test_labels_series) = \
-            train_test_split(self.X_df, self.y_series, test_size = 0.25, random_state = 42)
+         self.test_features_df, 
+         self.train_labels_series, 
+         self.test_labels_series) = train_test_split(X_df, y_series, test_size=0.25, random_state=42)
 
-        # RandomForestClassivier/Regressor want
+        # RandomForestClassifier/Regressor want
         # pure numpies:
+        
         self.X = self.train_features_df.reset_index(drop=True).to_numpy(dtype=float)
         self.y = self.train_labels_series.reset_index(drop=True).to_numpy(dtype=float)
         self.X_test = self.test_features_df.reset_index(drop=True).to_numpy(dtype=float)
         self.y_test = self.test_labels_series.reset_index(drop=True).to_numpy(dtype=float)
 
-        self.optimize_hyperparameters(self.X, self.y)
+        # Do we have optimal parameters from previous run?
+        
+        rf_optimal_parms_path = os.path.join(self.script_dir, 'best_params.pickle')
+        try:
+            with open(rf_optimal_parms_path, 'rb') as fd:
+                best_params = pickle.load(fd)
+                # The '**' signals that best_params
+                # is a dict, and should be used as
+                # kwargs:
+                self.rand_forest.set_params(**best_params)
+        except FileNotFoundError:
+            # No previously stored parms
+            best_params = self.optimize_hyperparameters(self.X, self.y)
+            with open(rf_optimal_parms_path, 'wb') as fd:
+                # Save as a text format:
+                pickle.dump(best_params, fd, protocol=0)
 
         self.log.info("Training the regressor...")
         self.rand_forest.fit(self.X, self.y)
         self.log.info("Done training the regressor.")
-
         predictions = self.rand_forest.predict(self.X_test)
+
         # Turn predictions back into a Series:
-        pred_series = pd.Series(predictions,
-                        name='VoterTurnout',
-                        index=self.test_labels_series.index)
+        pred_series = pd.Series(predictions, name='VoterTurnout', 
+            index=self.test_labels_series.index)
         
-        # There are multiple copies of the TurnoutRate 
+        # There are multiple copies of the TurnoutRate
         # for each (<State>,<year>) pair. Get the unique
         # values by grouping by 'Region' and 'Election'.
         # Each group will have identical VoterTurnout values.
         # Get get just one, take the group means. Since values
         # are identical within each group, no data are lost:
         
-        gb_pred = pred_series.groupby(['Region','Election'])
+        gb_pred = pred_series.groupby(['Region', 'Election'])
         pred_series_unique = gb_pred.mean()
-        gb_truth = self.test_labels_series.groupby(['Region','Election'])
+        gb_truth = self.test_labels_series.groupby(['Region', 'Election'])
         truth_series_unique = gb_truth.mean()
-        
-        
-        self.evaluate_model(pred_series_unique, truth_series_unique)
+        return (pred_series_unique, truth_series_unique)
+
 
     #------------------------------------
     # optimize_hyperparameters 
     #-------------------
     
     def optimize_hyperparameters(self, train_X, train_y):
+        '''
+        Takes a feature matrix and target, and returns
+        a dictionary with the best Random Forest parameters.
+        Assumes self.rand_forest is an uninitialized instance
+        of RandomForestClassifier.
+        
+        Example of return: {'max_depth': 3, 'n_estimators': 8}
+        
+        @param train_X: feature matrix
+        @type train_X: pd.DataFrame
+        @param train_y: target vector
+        @type train_y: pd.Series
+        '''
         
         tuned_parameters = {#****'n_estimators' : 1+np.array(range(10)),
                             'n_estimators' : 1+np.array(range(10)),
@@ -358,7 +453,7 @@ class StatePredictor(object):
         
         #print(f'Best params: {clf.best_params_}')
         #print(f'Best score: {clf.best_score_}')
-
+        return clf.best_params_
 
     #------------------------------------
     # train_model 
