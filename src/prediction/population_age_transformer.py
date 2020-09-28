@@ -17,6 +17,10 @@ class PopulationAgeTransformer(BaseEstimator, TransformerMixin):
     https://www.kff.org/other/state-indicator/distribution-by-age/?currentTimeframe=10&selectedRows=%7B%22states%22:%7B%22all%22:%7B%7D%7D,%22wrapups%22:%7B%22united-states%22:%7B%7D%7D%7D&sortModel=%7B%22colId%22:%22Location%22,%22sort%22:%22asc%22%7D
     '''
 
+    #------------------------------------
+    # Constructor 
+    #-------------------
+
     def __init__(self, file_dict):
         '''
         Given a dictionary with keys (<State>,<year>),

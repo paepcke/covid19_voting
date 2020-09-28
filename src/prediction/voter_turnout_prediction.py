@@ -142,6 +142,12 @@ class StatePredictor(object):
                                             '../../data/age2018.csv')
                            }
 
+    MAIL_VOTING =          {
+                            2016: os.path.join(os.path.dirname(__file__),
+                                               '../../voteByMail2016.xls'),
+                            2018: os.path.join(os.path.dirname(__file__),
+                                               '../../voteByMail2018.xlsx')
+                           }
 
     RANDOM_SEED = 42
 
