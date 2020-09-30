@@ -53,6 +53,19 @@ class CovidUtils(object):
 
     @classmethod
     def state_abbrev_series(cls, state_name_series):
+        '''
+        Takes an pandas Series of full State names, and
+        returns a pd Series of the corresponding State
+        abbreviations. 
+        
+        @param state_name_series: the full-name States
+            to resolve to 2-letter abbreviations
+        @type state_name_series: pd.Series
+        @returns a new Series with abbreviations that
+            correspond to the given full State names
+            (done pairwise).
+        @rtype pd.Series
+        '''
         # One 'state' name in the voter turnout Excel
         # sheets is 'United States', leave that abbrev
         # NaN to conform with the newer turnout sheets:
@@ -68,7 +81,12 @@ class CovidUtils(object):
     
     def import_state_mappings(self):
         '''
-        Initializes States related lookup dicts:
+        Initializes States related lookup dicts.
+        The created mapping is for the numeric State
+        numbers used in the Google Trends query count
+        data. These mappings are not for connecting
+        two-letter State abbrevs and the full State
+        names.
         
         1. self.state_codings: mapping the integer codes for States
            to the 2-letter State names:
