@@ -14,8 +14,8 @@ pd.set_option('display.expand_frame_repr', False)
 pd.set_option('max_colwidth', None)
 
 
-#*****TEST_ALL = True
-TEST_ALL = False
+TEST_ALL = True
+#TEST_ALL = False
 
 
 class MailVotingTest(unittest.TestCase):
@@ -47,16 +47,17 @@ class MailVotingTest(unittest.TestCase):
     # test_2018
     #-------------------
 
-    #****@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_2018(self):
         year = 2018
         df = ElectionSurveyCleaner().transform(year)
-        self.assertEqual(df.index[0], ('AL', year))
-        maine_data = pd.Series([646083,185763,0.287522])
-        self.assertTrue(all(df.loc['ME',year].values.round(4) == maine_data.round(4)))
+        self.assertEqual(df.index[0], ('0100100000', 'AL', 'AUTAUGA COUNTY', 2018))
+        durham_vote_count = df.reindex(['DURHAM COUNTY'], 
+                                       level='Jurisdiction')['MailBallotsReturned2018'].item()
+        self.assertEqual(int(durham_vote_count), 2420)
         # All sums should be positive, lest we missed 
         # a -888888 or -999999 code (Data not Applicable/Available)
-        self.assertTrue(all(df[f'VoteTotalCount{year}'] >= 0))
+        self.assertTrue(all(df[f'MailBallotsReturned{year}'] >= 0))
 
     #------------------------------------
     # test_2016
