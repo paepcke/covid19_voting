@@ -74,7 +74,25 @@ class MailVotingTest(unittest.TestCase):
         # All sums should be positive, lest we missed 
         # a -888888 or -999999 code (Data not Applicable/Available)
         self.assertTrue(all(df[f'VoteTotalCount{year}'] >= 0))
+        
+        
+    #------------------------------------
+    # test_2014
+    #-------------------
 
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_2014(self):
+        year = 2014
+        df = ElectionSurveyCleaner().transform(year)
+        self.assertEqual(df.index[0], ('0100100000', 'AL', 'AUTAUGA COUNTY', 2014))
+        durham_vote_count = df.reindex(['DURHAM COUNTY'], 
+                                       level='Jurisdiction')['VoteProvisional2014'].item()
+        self.assertEqual(int(durham_vote_count), 648)
+        # All sums should be positive, lest we missed 
+        # a -888888 or -999999 code (Data not Applicable/Available)
+        self.assertTrue(all(df[f'VoteByMail{year}'] >= 0))
+
+# --------------------------- Main ----------
 if __name__ == "__main__":
     #import sys;sys.argv = ['', 'Test.testName']
     unittest.main()
