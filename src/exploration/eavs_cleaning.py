@@ -10,7 +10,13 @@ import sys
 
 from sklearn.base import BaseEstimator, TransformerMixin
 
+sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from prediction.covid_utils import CovidUtils
+
 import pandas as pd
+import numpy as np
 from utils.logging_service import LoggingService
 
 def catch_non_int(value):
@@ -248,7 +254,122 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         Constructor
         '''
         self.log = LoggingService()
+        state_fips_file = os.path.join(os.path.dirname(__file__),
+                                       '../../data/Exploration/fips_states_only.xlsx')
+        
+        # Import the Census FIPS codes for all years:
+        self.load_census_geocodes()
+        
+        # Initialize a simple table 
+        #     StateFull,  StateFIPS,   State
+        #    'Wisconsin',    '55',       'WI'
+        #                              ...
+        self.log.info("Reading State FIPS codes...")
+        
+        self.state_fips = pd.read_excel(state_fips_file,
+                                        header=[0],
+                                        dtype={
+                                             'StateFull' : str,
+                                             'StateFIPS' : str,
+                                             'State' : str
+                                             }
+                                        )
+        # All entries must be strings:
+        self.state_fips = self.state_fips.astype(str)
+        # The State FIPS must have two digits:
+        self.state_fips.StateFIPS = self.state_fips.StateFIPS.str.zfill(2)
+
+        self.log.info("Done reading State FIPS codes.")
+
+    #------------------------------------
+    # load_census_geocodes
+    #-------------------
     
+    def load_census_geocodes(self):
+        '''
+        Loads and if necessary corrects the
+        Census bureau FIPS files in force in
+        2018, 2016, 2014. Initializes
+        
+           self.geocodes{year}
+           
+        for year in {2014,2016, 2018}
+        '''
+
+        self.geocodes = {}
+        for year in [2014, 2016, 2018]:
+            # Get reference to the Census geo codes:
+            geocode_file = os.path.join(os.path.dirname(__file__),
+                                        f'../../data/Exploration/all-geocodes-v{year}.xlsx')
+    
+            self.log.info("Reading Census geo codes...")
+            self.geocodes[year] = pd.read_excel(geocode_file,
+                                                skiprows=[0,1,2,3],
+                                                header=[0],
+                                                usecols=['State Code (FIPS)',
+                                                         'County Code (FIPS)',
+                                                         'County Subdivision Code (FIPS)',
+                                                         'Area Name (including legal/statistical area description)'
+                                                         ],
+                                                dtype={
+                                                       'State Code (FIPS)' : str,
+                                                       'County Code (FIPS)' : str,
+                                                       'County Subdivision Code (FIPS)' : str,
+                                                       'Area Name (including legal/statistical area description)': str
+                                                       }
+                                                )
+            # Shorten the col names:
+            self.geocodes[year] = self.geocodes[year].rename({
+                'State Code (FIPS)' : 'StateFIPS',
+                'County Code (FIPS)': 'County',
+                'County Subdivision Code (FIPS)' : 'Subdivision',
+                'Area Name (including legal/statistical area description)' : 'Jurisdiction'
+                }, axis=1)
+            # Ensure that all subdivision codes have
+            # leading zeroes to make them all length 5:
+            self.geocodes[year]['Subdivision'] = self.geocodes[year]['Subdivision'].str.zfill(5)
+            # Remove Puerto Rico rows:
+            self.geocodes[year] = self.geocodes[year].drop(self.geocodes[year][self.geocodes[year]['StateFIPS'] == '72'].index, 
+                                               axis=0)
+
+        # Fixes for 2018:
+        # ---------------
+        # Fix missing entry for one Wisconsin county: 
+        #   ['55','101','89550','Racine County']
+        new_entry = pd.DataFrame({'StateFIPS'    : '55',
+                                  'County'       : '101',
+                                  'Subdivision'  : '89550',
+                                  'Jurisdiction' : 'Racine County'
+                                  }, index=[len(self.geocodes[year])])
+        self.geocodes[2018] = pd.concat([self.geocodes[2018], new_entry], axis=0)
+        
+        # Fix missing Maine abroad entry:
+        new_entry = pd.DataFrame({'StateFIPS'   : '23',
+                                  'County'      : '000',
+                                  'Subdivision' : '23',
+                                  'Jurisdiction': 'MAINE - UOCAVA'
+                                  }, index=[len(self.geocodes)])
+        self.geocodes[2018] = pd.concat([self.geocodes[2018], new_entry], axis=0)
+
+        # Fixes for 2016:
+        # ---------------
+        
+        new_entry = pd.DataFrame({'StateFIPS'    : '55',
+                                  'County'       : '139',
+                                  'Subdivision'  : '26982',
+                                  'Jurisdiction' : 'Winnebago County'
+                                  }, index=[len(self.geocodes[year])])
+        self.geocodes[2016] = pd.concat([self.geocodes[2016], new_entry], axis=0)
+
+        # Fix missing Maine abroad entry:
+        new_entry = pd.DataFrame({'StateFIPS'   : '23.',
+                                  'County'      : '000',
+                                  'Subdivision' : '23',
+                                  'Jurisdiction': 'MAINE - UOCAVA'
+                                  }, index=[len(self.geocodes)])
+
+        self.geocodes[2016] = pd.concat([self.geocodes[2016], new_entry], axis=0)
+
     #------------------------------------
     # clean_survey_2018 
     #-------------------
@@ -273,81 +394,81 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         df = sheet.rename({
                 'FIPSCode'                            : f'FIPSCodeDetailed',
                 'Jurisdiction_Name'                   : f'Jurisdiction',
-                'State_Full'                          : f'State_Full{year}',
-                'State_Abbr'                          : f'State_Abbr',
-                'C1aMailBallotsSent'                  : f'MailBallotsSent{year}',
-                'C1bMailBallotsReturned'              : f'MailBallotsReturned{year}',
-                'C1cUndeliverable'                    : f'Undeliverable{year}',
-                'C1dVoided'                           : f'Voided{year}',
-                'C1eVotedInPerson'                    : f'VotedInPerson{year}',
-                'C2aPermanentByMailTransmitted'       : f'PermanentByMailTransmitted{year}',
-                'C3aByMailCounted'                    : f'ByMailCounted{year}',
-                'C4aByMailRejected'                   : f'ByMailRejected{year}',
-                'C4bRejDeadline'                      : f'RejDeadline{year}',
-                'C4cRejSignatureMissing'              : f'RejSignatureMissing{year}',
-                'C4dRejWitnessSignature'              : f'RejWitnessSignature{year}',
-                'C4eRejNonMatchingSig'                : f'RejNonMatchingSig{year}',
-                'C4fRejNoElectionOfficialSig'         : f'RejNoElectionOfficialSig{year}',
-                'C4gRejUnofficialEnvelope'            : f'RejUnofficialEnvelope{year}',
-                'C4hRejBallotMissing'                 : f'RejBallotMissing{year}',
-                'C4iRejEnvelopeNotSealed'             : f'RejEnvelopeNotSealed{year}',
-                'C4jRejNoAddr'                        : f'RejNoAddr{year}',
-                'C4kRejMultipleBallots'               : f'RejMultipleBallots{year}',
-                'C4lRejDeceased'                      : f'RejDeceased{year}',
-                'C4mRejAlreadyVoted'                  : f'RejAlreadyVoted{year}',
-                'C4nRejNoVoterId'                     : f'RejNoVoterId{year}',
-                'C4oRejNoBallotApplication'           : f'RejNoBallotApplication{year}',
-                'C4pRejOther1ReasonTxt'               : f'RejOtherReason1{year}',
-                'C4pRejOther1ReasonCount'             : f'RejOtherReasonCount1{year}',
-                'C4qRejOther2ReasonTxt'               : f'RejOtherReason2{year}',
-                'C4qRejOther2ReasonCount'             : f'RejOtherReason2Count{year}',
-                'D1aVotesCast'                        : f'VotesCast{year}',
-                'D2aVotedAtPoll'                      : f'VotedAtPoll{year}',
-                'D2bVotedEarlyPhysical'               : f'VotedEarlyPhysical{year}',
-                'D2CommentsEarlyVotingPhysical'       : f'CommentsEarlyVotingPhysical{year}',
-                'D3aNumOfPrecincts'                   : f'NumOfPrecincts{year}',
-                'D4aNumPollingPlacesElectDay'         : f'NumPollingPlacesElectDay{year}',
-                'D5aNumEarlyVotingPlaces'             : f'NumEarlyVotingPlaces{year}',
-                'D6NumPollWorkersElectDay'            : f'NumPollWorkersElectDay{year}',
-                'D7NumPollWorkersEarlyVoting'         : f'NumPollWorkersEarlyVoting{year}',
-                'D6_D7CommentsPollingStationComments' : f'PollingStationComments{year}',
-                'D8aNumPollWorkers'                   : f'NumPollWorkers{year}',
-                'D8bPWUnder18'                        : f'PWUnder18{year}',
-                'D8cPW18_25'                          : f'PW18_25{year}',
-                'D8d26_40'                            : f'26_40{year}',
-                'D8ePW41_60'                          : f'PW41_60{year}',
-                'D8fPW61_70'                          : f'PW61_70{year}',
-                'D8gPW71Plus'                         : f'PW71Plus{year}',
-                'D8CommentsPW'                        : f'PWComments{year}',
-                'D9PWRecruitingDifficulties'          : f'PWRecruitingDifficulties{year}',
-                'E1aProvisionalTotal'                 : f'ProvisionalTotal{year}',
-                'E1bProvisionalCountedFully'          : f'ProvisionalCountedFully{year}',
-                'E1cProvisionalCountedPartially'      : f'ProvisionalCountedPartially{year}',
-                'E1dProvisionalRejected'              : f'ProvisionalRejected{year}',
-                'E1CommentsProvisional'               : f'CommentsProvisional{year}',
-                'E2aRejProvisionalTotal'              : f'RejProvisionalTotal{year}',
-                'E2bRejProvisionalNotRegistered'      : f'RejProvisionalNotRegistered{year}',
-                'E2cRejProvisionalWrongJurisdiction'  : f'RejProvisionalWrongJurisdiction{year}',
-                'E2dRejProvisionalWrongPrecinct'      : f'RejProvisionalWrongPrecinct{year}',
-                'E2eRejProvisionalNoID'               : f'RejProvisionalNoID{year}',
-                'E2fRejProvisionalIncomplete'         : f'RejProvisionalIncomplete{year}',
-                'E2gRejProvisionalBallotMissing'      : f'RejProvisionalBallotMissing{year}',
-                'E2hRejProvisionalNoSig'              : f'RejProvisionalNoSig{year}',
-                'E2iRejProvisionalSigNotMatching'     : f'RejProvisionalSigNotMatching{year}',
-                'E2jRejAlreadyVoted'                  : f'RejAlreadyVoted{year}',
-                'E2kRejProvisionalOther1Txt'          : f'RejProvisionalOther1{year}',
-                'E2kRejProvisionalOther1Count'        : f'RejProvisional1Count{year}',
-                'E2lOtherRejProvisionalOther2Txt'     : f'OtherRejProvisionalOther2{year}',
-                'E2lRejProvisionalOther2Count'        : f'RejProvisionalOther2Count{year}',
-                'E2mRejProvisionalOther3Txt'          : f'RejProvisionalOther3Txt{year}',
-                'E2nRejProvisionalOther3Count'        : f'RejProvisionalOther3Count{year}',
-                'F1aVoteCounted'                      : f'VoteCounted{year}',
-                'F1bVotedPhysically'                  : f'VotedPhysically{year}',
-                'F1cVotedAbroad'                      : f'VotedAbroad{year}',
-                'F1dVoteByMail'                       : f'VoteByMail{year}',
-                'F1eVoteProvisionalBallot'            : f'VoteProvisionalBallot{year}',
-                'F1fVoteInPersonEarly'                : f'VoteInPersonEarly{year}',
-                'F1gVoteByMailJurisdiction'           : f'VoteByMailJurisdiction{year}'
+                'State_Full'                          : f'{year}State_Full',
+                'State_Abbr'                          : f'{year}State_Abbr',
+                'C1aMailBallotsSent'                  : f'{year}ByMailCountBallotsSent',
+                'C1bMailBallotsReturned'              : f'{year}ByMailCountBallotsReturned',
+                'C1cUndeliverable'                    : f'{year}ByMailRejUndeliverable',
+                'C1dVoided'                           : f'{year}ByMailRejVoided',
+                'C1eVotedInPerson'                    : f'{year}ByMailRejVotedInPerson',
+                'C2aPermanentByMailTransmitted'       : f'{year}ByMailCountPermanentByMailTransmitted',
+                'C3aByMailCounted'                    : f'{year}ByMailCountCounted',
+                'C4aByMailRejected'                   : f'{year}ByMailCountByMailRejected',
+                'C4bRejDeadline'                      : f'{year}ByMailRejDeadline',
+                'C4cRejSignatureMissing'              : f'{year}ByMailRejSignatureMissing',
+                'C4dRejWitnessSignature'              : f'{year}ByMailRejWitnessSignature',
+                'C4eRejNonMatchingSig'                : f'{year}ByMailRejNonMatchingSig',
+                'C4fRejNoElectionOfficialSig'         : f'{year}ByMailRejNoElectionOfficialSig',
+                'C4gRejUnofficialEnvelope'            : f'{year}ByMailRejUnofficialEnvelope',
+                'C4hRejBallotMissing'                 : f'{year}ByMailRejBallotMissing',
+                'C4iRejEnvelopeNotSealed'             : f'{year}ByMailRejEnvelopeNotSealed',
+                'C4jRejNoAddr'                        : f'{year}ByMailRejNoAddr',
+                'C4kRejMultipleBallots'               : f'{year}ByMailRejMultipleBallots',
+                'C4lRejDeceased'                      : f'{year}ByMailRejDeceased',
+                'C4mRejAlreadyVoted'                  : f'{year}ByMailRejAlreadyVoted',
+                'C4nRejNoVoterId'                     : f'{year}ByMailRejNoVoterId',
+                'C4oRejNoBallotApplication'           : f'{year}ByMailRejNoBallotApplication',
+                'C4pRejOther1ReasonTxt'               : f'{year}ByMailRejOtherReason1',
+                'C4pRejOther1ReasonCount'             : f'{year}ByMailRejOtherReasonCount1',
+                'C4qRejOther2ReasonTxt'               : f'{year}ByMailRejOtherReason2',
+                'C4qRejOther2ReasonCount'             : f'{year}ByMailRejOtherReason2Count',
+                'D1aVotesCast'                        : f'{year}TotalCountVotesCast',
+                'D2aVotedAtPoll'                      : f'{year}TotalCountVotedAtPoll',
+                'D2bVotedEarlyPhysical'               : f'{year}TotalCountVotedEarlyPhysical',
+                'D2CommentsEarlyVotingPhysical'       : f'{year}CommentsEarlyVotingPhysical',
+                'D3aNumOfPrecincts'                   : f'{year}OperationsNumOfPrecincts',
+                'D4aNumPollingPlacesElectDay'         : f'{year}OperationsNumPollingPlacesElectDay',
+                'D5aNumEarlyVotingPlaces'             : f'{year}OperationsNumEarlyVotingPlaces',
+                'D6NumPollWorkersElectDay'            : f'{year}OperationsNumPollWorkersElectDay',
+                'D7NumPollWorkersEarlyVoting'         : f'{year}OperationsNumPollWorkersEarlyVoting',
+                'D6_D7CommentsPollingStationComments' : f'{year}OperationsPollingStationComments',
+                'D8aNumPollWorkers'                   : f'{year}OperationsNumPollWorkers',
+                'D8bPWUnder18'                        : f'{year}OperationsPWUnder18',
+                'D8cPW18_25'                          : f'{year}OperationsPW18_25',
+                'D8d26_40'                            : f'{year}OperationsPW26_40',
+                'D8ePW41_60'                          : f'{year}OperationsPW41_60',
+                'D8fPW61_70'                          : f'{year}OperationsPW61_70',
+                'D8gPW71Plus'                         : f'{year}OperationsPW71Plus',
+                'D8CommentsPW'                        : f'{year}OperationsPWComments',
+                'D9PWRecruitingDifficulties'          : f'{year}OperationsPWRecruitingDifficulties',
+                'E1aProvisionalTotal'                 : f'{year}ProvisionalCountTotal',
+                'E1bProvisionalCountedFully'          : f'{year}ProvisionalCountCountedFully',
+                'E1cProvisionalCountedPartially'      : f'{year}ProvisionalCountCountedPartially',
+                'E1dProvisionalRejected'              : f'{year}ProvisionalCountRejected',
+                'E1CommentsProvisional'               : f'{year}CommentsProvisional',
+                'E2aRejProvisionalTotal'              : f'{year}ProvisionalCountTotal',
+                'E2bRejProvisionalNotRegistered'      : f'{year}ProvisionalRejProvisionalNotRegistered',
+                'E2cRejProvisionalWrongJurisdiction'  : f'{year}ProvisionalRejWrongJurisdiction',
+                'E2dRejProvisionalWrongPrecinct'      : f'{year}ProvisionalRejWrongPrecinct',
+                'E2eRejProvisionalNoID'               : f'{year}ProvisionalRejNoID',
+                'E2fRejProvisionalIncomplete'         : f'{year}ProvisionalRejIncomplete',
+                'E2gRejProvisionalBallotMissing'      : f'{year}ProvisionalRejBallotMissing',
+                'E2hRejProvisionalNoSig'              : f'{year}ProvisionalRejNoSig',
+                'E2iRejProvisionalSigNotMatching'     : f'{year}ProvisionalRejSigNotMatching',
+                'E2jRejAlreadyVoted'                  : f'{year}ProvisionalRejAlreadyVoted',
+                'E2kRejProvisionalOther1Txt'          : f'{year}ProvisionalRejOther1Txt',
+                'E2kRejProvisionalOther1Count'        : f'{year}ProvisionalRej1Count',
+                'E2lOtherRejProvisionalOther2Txt'     : f'{year}ProvisionalRejOther2Txt',
+                'E2lRejProvisionalOther2Count'        : f'{year}ProvisionalRejOther2Count',
+                'E2mRejProvisionalOther3Txt'          : f'{year}ProvisionalRejOther3Txt',
+                'E2nRejProvisionalOther3Count'        : f'{year}RejProvisionalOther3Count',
+                'F1aVoteCounted'                      : f'{year}TotalVoteCounted',
+                'F1bVotedPhysically'                  : f'{year}TotalVotedPhysically',
+                'F1cVotedAbroad'                      : f'{year}TotalVotedAbroad',
+                'F1dVoteByMail'                       : f'{year}TotalVoteByMail',
+                'F1eVoteProvisionalBallot'            : f'{year}TotalVoteProvisionalBallot',
+                'F1fVoteInPersonEarly'                : f'{year}TotalVoteInPersonEarly',
+                'F1gVoteByMailJurisdiction'           : f'{year}TotalVoteByMailOnlyJurisdiction',
             }, axis=1)
             
         # There can be stray columns where
@@ -366,9 +487,6 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                                     'Does not apply' : 0,
                                     'Data not available' : 0
                                     })
-        
-        # Same for uses of 'Does not apply' and 'Data not available'
-        df = df.replace()
 
 #         # Make 10-digit FIPSCode into str, b/c the leading
 #         # zeroes are confused with Octal:
@@ -378,16 +496,24 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # the detailed FIPS code to be uniform with other
         # sheets:
         
-        st_abbr = df[f'State_Abbr']
-        df = df.drop(f'State_Abbr', axis=1)
+        st_abbr = df[f'{year}State_Abbr']
+        df = df.drop(f'{year}State_Abbr', axis=1)
         df.insert(1,f'State', st_abbr)
 
         # Create the 5-digit FIPS version, where the
         # first two digits designate the State, and
         # remaining 3 denote the county:
-        
-        df.insert(3, f'FIPSCoarse{year}', df[f'FIPSCodeDetailed'].str[:5])
-        
+
+        county_FIPS = self.parse_fips_codes(df[[f'FIPSCodeDetailed', 'State']],
+                                               self.geocodes[year])
+        df.insert(3, f'FIPSCoarse{year}', county_FIPS)
+
+        # Remove Guam, Virgin Islands, AMERICAN SAMOA, Puerto Rico:
+        df = df.drop(df[df['State'] == 'GU'].index)
+        df = df.drop(df[df['State'] == 'VI'].index)
+        df = df.drop(df[df['State'] == 'AS'].index)
+        df = df.drop(df[df['State'] == 'PR'].index)
+
         # Make multiindex:
         mindx_df = df[['FIPSCodeDetailed','State','Jurisdiction']].copy()
         mindx_df.columns = ['FIPSDetailed','State','Jurisdiction']
@@ -400,9 +526,11 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                                                 'Election'
                                                 ])
         df.index = mindx
-
-
-        return df
+        
+        # Remove the now superfluous cols:
+        df_final = df.drop(['FIPSCodeDetailed', 'State', 'Jurisdiction'], axis=1)
+        
+        return df_final
     
     #------------------------------------
     # clean_survey_2016 
@@ -423,64 +551,65 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                               converters=self.INT_CONVERSIONS[year]
                               )
         self.log.info(f"Done reading Election Administration and Voting Survey for {year}.")
-        df = sheet.rename({'FIPSCode'                                 : f'FIPSCodeDetailed',
+        df = sheet.rename({
+                           'FIPSCode'                                 : f'FIPSCodeDetailed',
                            'JurisdictionName'                         : f'Jurisdiction',
-                           'F1aVoterTurnout'                          : f'VoteTotalCount{year}',
-                           'F1bVoteAtPhysical'                        : f'VoteAtPhysicalCenter{year}',
-                           'F1cVoteAbroad'                            : f'VoteAbroadCount{year}',
-                           'F1dVoteAbsentee'                          : f'VoteAbsenteeCount{year}',
-                           'F1eVoteProvisional'                       : f'VoteProvisionalCount{year}',
-                           'F1fVoteEarlyPhysical'                     : f'VoteEarlyBallotCentersCount{year}',
-                           'F1gVoteByMail'                            : f'VoteByMailCount{year}',
-                           'F3VoteFirstTimersIDNeededAndProvided'     : f'VoteNeededAndHadIDCount{year}',
-                           'E1aProvisionalTotal'                      : f'VoteProvisionalCount{year}',
-                           'E1bProvisionalCountedFull'                : f'VoteProvCountedFull{year}',
-                           'E1cProvisionalCountedPartially'           : f'VoteProvCountedPartial{year}',
-                           'E1dProvisionalRejectedTotal'              : f'VoteProvRejectedCount{year}',
-                           'E2aProvisionalRejVoterNotInState'         : f'VoteProvRejNotInState{year}',
-                           'E2bProvisionalRejWrongJurisdiction'       : f'VoteProvRejWrongJurisdiction{year}',
-                           'E2cProvisionalRejWrongPrecinct'           : f'VoteProvRejWrongPrecinct{year}',
-                           'E2dProvisionalRejInsufficientID'          : f'VoteProvRejInsufficientId{year}',
-                           'E2eProvisionalRejIncompleteOrIllegible'   : f'VoteProvRejIllegible{year}',
-                           'E2fProvisionalRejBallotMissing'           : f'VoteProvRejBallotMissing{year}',
-                           'E2gProvisionalRejNoSig'                   : f'VoteProvRejNoSig{year}',
-                           'E2hProvisionalRejNonMatchingSig'          : f'VoteProvRejSigNotMatching{year}',
-                           'E2iProvisionalRejAlreadyVoted'            : f'VoteProvRejAlreadyVoted{year}',
-                           'E2j_OtherProvisionalRejOther'             : f'VoteProvRejOther{year}',
-                           'C1aAbsenteeSent'                          : f'VoteAbsenteeReturnedForCounting{year}',
-                           'C1bAbsenteeReturnedForCounting'           : f'VoteAbsenteeCount{year}',
-                           'C1cVoteAbsenteeUndeliverable'             : f'VoteAbsenteeUndeliverable{year}',
-                           'C1dAbsenteeSpoiled'                       : f'VoteAbsenteeSpoiled{year}',
-                           'C2AbsenteePermanentList?'                 : f'VoteAbsenteePermanentListYesNo{year}',
-                           'C3AbsenteeSentBecauseOnPermanentList'     : f'VoteAbsenteeVotedFromPermanentListCount{year}',
-                           'C4aAbsenteeCounted'                       : f'VoteAbsenteeCount{year}',
-                           'C4bAbsenteeRejected'                      : f'VoteAbsenteeRejectedCount{year}',
-                           'C5aAbsenteeRejLate'                       : f'VoteAbsenteeRejLate{year}',
-                           'C5bAbsenteeRejNoSig'                      : f'VoteAbsenteeRejNoSig{year}',
-                           'C5cAbsenteeRejNoWitnessSig'               : f'VoteAbsenteeRejNoWitnessSig{year}',
-                           'C5dAbsenteeRejSigNotMatching'             : f'VoteAbsenteeRejSigNotMatching{year}',
-                           'C5eAbsenteeRejNoElectOfficialSig'         : f'VoteAbsenteeRejNoElectionOfficialSig{year}',
-                           'C5fAbsenteeRejUnofficialEnvelope'         : f'VoteAbsenteeRejNonOfficialEnvelope{year}',
-                           'C5gAbsenteeRejBallotMissing'              : f'VoteAbsenteeRejBallotMissing{year}',
-                           'C5hAbsenteeRejEnvNotSealed'               : f'VoteAbsenteeRejEnvNotSealed{year}',
-                           'C5iAbsenteeRejNoResidentAddr'             : f'VoteAbsenteeRejNoResidentAddr{year}',
-                           'C5jAbsenteeRejMultipleBallots'            : f'VoteAbsenteeRejMultipleBallotsInEnv{year}',
-                           'C5kAbsenteeRejVoterDeceased'              : f'VoteAbsenteeRejVoterDeceased{year}',
-                           'C5lAbsenteeRejAlreadyVoted'               : f'VoteAbsenteeRejAlreadyVoted{year}',
-                           'C5mAbsenteeRejFirstTimeVoterBadID'        : f'VoteAbsenteeRejBadId{year}',
-                           'C5nAbsenteeRejNoApplication'              : f'VoteAbsenteeRejNoApplication{year}',
-                           'D1aNumPrecincts'                          : f'NumPrecincts{year}',
-                           'D1CommentsPrecincts'                      : f'NumPrecinctsComments{year}',
-                           'D2aNumPollingPlaces'                      : f'NumPollingPlaces{year}',
-                           'D3aNumPollingWorkers'                     : f'NumPollWorkers{year}',
-                           'D4aPWUnder18'                             : f'PWUnder18{year}',
-                           'D4bPW18_25'                               : f'PW18_25{year}',
-                           'D4c26_40'                                 : f'PW26_40{year}',
-                           'D4dPW41_60'                               : f'PW41_60{year}',
-                           'D4ePW61_70'                               : f'PW61_70{year}',
-                           'D4fPWOver70'                              : f'PW71Plus{year}',
-                           'D5PWRecruitingDifficulty'                 : f'PWRecruitingDifficulty{year}',
-                           'D5CommentsPW'                             : f'PWDifficultyComments'
+                           'F1aVoterTurnout'                          : f'{year}TotalVote',
+                           'F1bVoteAtPhysical'                        : f'{year}TotalVoteAtPhysicalCenter',
+                           'F1cVoteAbroad'                            : f'{year}TotalVoteAbroad',
+                           'F1dVoteAbsentee'                          : f'{year}TotalVoteAbsentee',
+                           'F1eVoteProvisional'                       : f'{year}TotalVoteProvisional',
+                           'F1fVoteEarlyPhysical'                     : f'{year}TotalVoteEarlyBallotCenters',
+                           'F1gVoteByMail'                            : f'{year}TotalByMail',
+                           'F3VoteFirstTimersIDNeededAndProvided'     : f'{year}TotalVoteNeededAndHadID',
+                           'E1aProvisionalTotal'                      : f'{year}TotalProvisional',
+                           'E1bProvisionalCountedFull'                : f'{year}TotalProvisionalCountedFull',
+                           'E1cProvisionalCountedPartially'           : f'{year}TotalProvisionalCountedPartial',
+                           'E1dProvisionalRejectedTotal'              : f'{year}TotalsionalRejected',
+                           'E2aProvisionalRejVoterNotInState'         : f'{year}ProvisionalRejNotInState',
+                           'E2bProvisionalRejWrongJurisdiction'       : f'{year}ProvisionalRejWrongJurisdiction',
+                           'E2cProvisionalRejWrongPrecinct'           : f'{year}ProvisionalRejWrongPrecinct',
+                           'E2dProvisionalRejInsufficientID'          : f'{year}ProvisionalRejInsufficientId',
+                           'E2eProvisionalRejIncompleteOrIllegible'   : f'{year}ProvisionalRejIllegible',
+                           'E2fProvisionalRejBallotMissing'           : f'{year}ProvisionalRejBallotMissing',
+                           'E2gProvisionalRejNoSig'                   : f'{year}ProvisionalRejNoSig',
+                           'E2hProvisionalRejNonMatchingSig'          : f'{year}ProvisionalRejSigNotMatching',
+                           'E2iProvisionalRejAlreadyVoted'            : f'{year}ProvisionalRejAlreadyVoted',
+                           'E2j_OtherProvisionalRejOther'             : f'{year}ProvisionalRejOther',
+                           'C1aAbsenteeSent'                          : f'{year}TotalAbsenteeReturnedForCounting',
+                           'C1bAbsenteeReturnedForCounting'           : f'{year}TotalVoteAbsenteeReturned',
+                           'C1cAbsenteeReturnedUndeliverable'         : f'{year}TotalAbsenteeUndeliverable',
+                           'C1dAbsenteeSpoiled'                       : f'{year}AbsenteeRejSpoiled',
+                           'C2AbsenteePermanentList?'                 : f'{year}OperationsVoteAbsenteePermanentListYesNo',
+                           'C3AbsenteeSentBecauseOnPermanentList'     : f'{year}TotalAbsenteeVotedFromPermanentListCount',
+                           'C4aAbsenteeCounted'                       : f'{year}TotalAbsenteeCounted',
+                           'C4bAbsenteeRejected'                      : f'{year}TotalAbsenteeRej',
+                           'C5aAbsenteeRejLate'                       : f'{year}AbsenteeRejLate',
+                           'C5bAbsenteeRejNoSig'                      : f'{year}AbsenteeRejNoSig',
+                           'C5cAbsenteeRejNoWitnessSig'               : f'{year}AbsenteeRejNoWitnessSig',
+                           'C5dAbsenteeRejSigNotMatching'             : f'{year}AbsenteeRejSigNotMatching',
+                           'C5eAbsenteeRejNoElectOfficialSig'         : f'{year}AbsenteeRejNoElectionOfficialSig',
+                           'C5fAbsenteeRejUnofficialEnvelope'         : f'{year}AbsenteeRejNonOfficialEnvelope',
+                           'C5gAbsenteeRejBallotMissing'              : f'{year}AbsenteeRejBallotMissing',
+                           'C5hAbsenteeRejEnvNotSealed'               : f'{year}AbsenteeRejEnvNotSealed',
+                           'C5iAbsenteeRejNoResidentAddr'             : f'{year}AbsenteeRejNoResidentAddr',
+                           'C5jAbsenteeRejMultipleBallots'            : f'{year}AbsenteeRejMultipleBallotsInEnv',
+                           'C5kAbsenteeRejVoterDeceased'              : f'{year}AbsenteeRejVoterDeceased',
+                           'C5lAbsenteeRejAlreadyVoted'               : f'{year}AbsenteeRejAlreadyVoted',
+                           'C5mAbsenteeRejFirstTimeVoterBadID'        : f'{year}AbsenteeRejBadId',
+                           'C5nAbsenteeRejNoApplication'              : f'{year}AbsenteeRejNoApplication',
+                           'D1aNumPrecincts'                          : f'{year}OperationsNumPrecincts',
+                           'D1CommentsPrecincts'                      : f'{year}OperationsNumPrecinctsComments',
+                           'D2aNumPollingPlaces'                      : f'{year}OperationsNumPollingPlaces',
+                           'D3aNumPollingWorkers'                     : f'{year}OperationsNumPollWorkers',
+                           'D4aPWUnder18'                             : f'{year}OperationsPWUnder18',
+                           'D4bPW18_25'                               : f'{year}OperationsPW18_25',
+                           'D4c26_40'                                 : f'{year}OperationsPW26_40',
+                           'D4dPW41_60'                               : f'{year}OperationsPW41_60',
+                           'D4ePW61_70'                               : f'{year}OperationsPW61_70',
+                           'D4fPWOver70'                              : f'{year}OperationsPW71Plus',
+                           'D5PWRecruitingDifficulty'                 : f'{year}OperationsPWRecruitingDifficulty',
+                           'D5CommentsPW'                             : f'{year}OperationsPWDifficultyComments'
                          }, axis=1)
 
         # There can be stray columns where
@@ -496,12 +625,24 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                                     '-888888.' : 0
                                     })
         
+        # Replace the "23." in FIPSCodeDetailed with '23':
+        df = df.replace(to_replace={'FIPSCodeDetailed' : '23.'}, value='23')
+        
         # Create the 5-digit FIPS version, where the
         # first two digits designate the State, and
         # remaining 3 denote the county:
+
+        county_FIPS = self.parse_fips_codes(df[[f'FIPSCodeDetailed', 'State']],
+                                            self.geocodes[year])
         
-        df.insert(3, f'FIPSCoarse{year}', df[f'FIPSCodeDetailed'].str[:5])
+        df.insert(3, f'FIPSCoarse{year}', county_FIPS)
         
+        # Remove Guam, Virgin Islands, AMERICAN SAMOA, Puerto Rico:
+        df = df.drop(df[df['State'] == 'GU'].index)
+        df = df.drop(df[df['State'] == 'VI'].index)
+        df = df.drop(df[df['State'] == 'AS'].index)
+        df = df.drop(df[df['State'] == 'PR'].index)
+
         # Make multiindex:
         mindx_df = df[['FIPSCodeDetailed','State','Jurisdiction']].rename({'FIPSCodeDetailed' : 'FIPSDetailed'}, axis=1)
         mindx_df['Election'] = [year]*len(df)
@@ -512,8 +653,10 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                                                 'Election'
                                                 ])
         df.index = mindx
+        # Remove the now superfluous cols:
+        df_final = df.drop(['FIPSCodeDetailed', 'State', 'Jurisdiction'], axis=1)
 
-        return df
+        return df_final
 
     #------------------------------------
     # clean_survey_2014
@@ -536,65 +679,65 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         
         df = sheet.rename({
                 'FIPSCode' :                                         f'FIPSCodeDetailed',
-                'PreferredOrder' :                                   f'PreferredOrder',
+                'PreferredOrder' :                                   f'{year}PreferredOrder',
                 'State' :                                            f'State',
                 'Jurisdiction' :                                     f'Jurisdiction',
-                'QF1aVoteTotalCount' :                               f'VoteTotalCount{year}',                                   
-                'QF1bVoteNumInPhysicalLoc' :                         f'VoteNumInPhysicalLoc{year}',                             
-                'QF1cVoteAbroad' :                                   f'VoteAbroad{year}',                                       
-                'QF1dVoteAbsentee' :                                 f'VoteAbsentee{year}',                                     
-                'QF1eVoteProvisional' :                              f'VoteProvisional{year}',                                  
-                'QF1fVoteAtEarlyVoteCenter' :                        f'VoteAtEarlyVoteCenter{year}',                            
-                'QF1gVoteByMail' :                                   f'VoteByMail{year}',                                       
-                'QF3VoteProvidedID' :                                f'VoteProvidedID{year}',                                   
-                'QF3_CommentVote' :                                  f'CommentVote{year}',                                      
-                'QC1aNumAbsenteeBallotsTransmitted' :                f'NumAbsenteeBallotsTransmitted{year}',                    
-                'QC1bAbsenteeSentInForCounting' :                    f'AbsenteeSentInForCounting{year}',                        
-                'QC1dAbsenteeSpoiled' :                              f'AbsenteeSpoiled{year}',                                  
-                'QC1eAbsenteeNotReturnedByVoter' :                   f'AbsenteeNotReturnedByVoter{year}',                       
-                'QC2AbsenteeHavePermanentListAutoSend' :             f'bsenteeHavePermanentListAutoSend{year}',                 
-                'QC3AbsenteeNumSentFromPermanentList' :              f'bsenteeNumSentFromPermanentList{year}',                  
-                'QC4aAbsenteeTotalCounted' :                         f'AbsenteeTotalCounted{year}',                             
-                'QC4bAbsenteeNumRejected' :                          f'AbsenteeNumRejected{year}',                              
-                'QC5aAbsenteeRejDeadline' :                          f'AbsenteeRejDeadline{year}',                              
-                'QC5bAbsenteeRejNoVoterSig' :                        f'AbsenteeRejNoVoterSig{year}',                            
-                'QC5cAbsenteeRejNoWitnessSig' :                      f'AbsenteeRejNoWitnessSig{year}',                          
-                'QC5dAbsenteeRejNonMatchingSig' :                    f'AbsenteeRejNonMatchingSig{year}',                        
-                'QC5eAbsenteeRejNoElectionOfficialSig' :             f'AbsenteeRejNoElectionOfficialSig{year}',                 
-                'QC5fAbsenteeRejUnofficialEnvelope' :                f'AbsenteeRejUnofficialEnvelope{year}',                    
-                'QC5gAbsenteeRejBallotMissing' :                     f'AbsenteeRejBallotMissing{year}',                         
-                'QC5hAbsenteeRejEnvelopeNotSealed' :                 f'AbsenteeRejEnvelopeNotSealed{year}',                     
-                'QC5iAbsenteeRejNoResidentAddr' :                    f'AbsenteeRejNoResidentAddr{year}',                        
-                'QC5jAbsenteeRejMultipleBallotsInEnvelope' :         f'AbsenteeRejMultipleBallotsInEnvelope{year}',             
-                'QC5kAbsenteeRejVoterDeceased' :                     f'AbsenteeRejVoterDeceased{year}',                         
-                'QC5lAbsenteeRejAlreadyVoted' :                      f'AbsenteeRejAlreadyVoted{year}',                          
-                'QC5mAbsenteeRejFirstTimerNoID' :                    f'AbsenteeRejFirstTimerNoID{year}',                        
-                'QC5nAbsenteeRejNoApplicationOnRecord' :             f'AbsenteeRejNoApplicationOnRecord{year}',                 
-                'QE1aProvisionalSubmitted' :                         f'ProvisionalSubmitted{year}',                             
-                'QE1bProvisionalCountedFullBallot' :                 f'ProvisionalCountedFullBallot{year}',                     
-                'QE1cProvisionalCountedPartialBallot' :              f'ProvisionalCountedPartialBallot{year}',                  
-                'QE1dProvisionalRejected' :                          f'ProvisionalRejected{year}',                              
-                'QE2aProvisionalRejVoterNotRegistered' :             f'ProvisionalRejVoterNotRegistered{year}',                 
-                'QE2bProvisionalRejWrongJurisdiction' :              f'ProvisionalRejWrongJurisdiction{year}',                  
-                'QE2cProvisionalRejWrongPrecinct' :                  f'ProvisionalRejWrongPrecinct{year}',                      
-                'QE2dProvisionalRejInsufficientID' :                 f'ProvisionalRejInsufficientID{year}',                     
-                'QE2eProvisionalRejIncompleteOrIllegible' :          f'ProvisionalRejIncompleteOrIllegible{year}',              
-                'QE2fProvisionalRejBallotMissionFromEnvelope' :      f'ProvisionalRejBallotMissionFromEnvelope{year}',          
-                'QE2gProvisionalRejNoSignature' :                    f'ProvisionalRejNoSignature{year}',                        
-                'QE2hProvisionalRejNonMatchingSig' :                 f'ProvisionalRejNonMatchingSig{year}',                     
-                'QE2iProvisionalRejAlreadyVoted' :                   f'ProvisionalRejAlreadyVoted{year}',                       
-                'QD1aNumPrecincts' :                                 f'NumPrecincts{year}',                                     
-                'QD2aNumPhysicalPlaces' :                            f'NumPhysicalPlaces{year}',                                
-                'QD2bNumPhysicalOtherThanElectionOffices' :          f'NumPhysicalOtherThanElectionOffices{year}',              
-                'QD2fPhysicalEarlyVotingPlaces' :                    f'PhysicalEarlyVotingPlaces{year}',                        
-                'QD3aNumPollWorkers' :                               f'NumPollWorkers{year}',                                   
-                'QD4aPWUnder18' :                                    f'PWUnder18{year}',                                        
-                'QD4bPW19_25' :                                      f'PW19_25{year}',                                          
-                'QD4cPW26_40' :                                      f'PW26_40{year}',                                          
-                'QD4dPW41_60' :                                      f'PW41_60{year}',                                          
-                'QD4ePW61_70' :                                      f'PW61_70{year}',                                          
-                'QD4fPW70Plus' :                                     f'PW70Plus{year}',                                         
-                'QD5PWRecruitingDifficulty' :                        f'PWRecruitingDifficulty{year}'
+                'QF1aVoteTotalCount' :                               f'{year}TotalCountVote',
+                'QF1bVoteNumInPhysicalLoc' :                         f'{year}TotalVoteNumInPhysicalLoc',
+                'QF1cVoteAbroad' :                                   f'{year}TotalVoteAbroad',
+                'QF1dVoteAbsentee' :                                 f'{year}TotalVoteAbsentee',
+                'QF1eVoteProvisional' :                              f'{year}TotalVoteProvisional',
+                'QF1fVoteAtEarlyVoteCenter' :                        f'{year}TotalVoteAtEarlyVoteCenter',
+                'QF1gVoteByMail' :                                   f'{year}TotalVoteByMail',
+                'QF3VoteProvidedID' :                                f'{year}TotalVoteProvidedID',
+                'QF3_CommentVote' :                                  f'{year}CommentsVote',
+                'QC1aNumAbsenteeBallotsTransmitted' :                f'{year}TotalNumAbsenteeBallotsTransmitted',
+                'QC1bAbsenteeSentInForCounting' :                    f'{year}TotalAbsenteeSentInForCounting',
+                'QC1dAbsenteeSpoiled' :                              f'{year}TotalAbsenteeSpoiled',
+                'QC1eAbsenteeNotReturnedByVoter' :                   f'{year}TotalAbsenteeNotReturnedByVoter',
+                'QC2AbsenteeHavePermanentListAutoSend' :             f'{year}OperationsAbsenteeHavePermanentListAutoSend',
+                'QC3AbsenteeNumSentFromPermanentList' :              f'{year}TotalAbsenteeNumSentFromPermanentList',
+                'QC4aAbsenteeTotalCounted' :                         f'{year}TotalAbsenteeTotalCounted',
+                'QC4bAbsenteeNumRejected' :                          f'{year}TotalAbsenteeNumRejected',
+                'QC5aAbsenteeRejDeadline' :                          f'{year}AbsenteeRejDeadline',
+                'QC5bAbsenteeRejNoVoterSig' :                        f'{year}AbsenteeRejNoVoterSig',
+                'QC5cAbsenteeRejNoWitnessSig' :                      f'{year}AbsenteeRejNoWitnessSig',
+                'QC5dAbsenteeRejNonMatchingSig' :                    f'{year}AbsenteeRejNonMatchingSig',
+                'QC5eAbsenteeRejNoElectionOfficialSig' :             f'{year}AbsenteeRejNoElectionOfficialSig',
+                'QC5fAbsenteeRejUnofficialEnvelope' :                f'{year}AbsenteeRejUnofficialEnvelope',
+                'QC5gAbsenteeRejBallotMissing' :                     f'{year}AbsenteeRejBallotMissing',
+                'QC5hAbsenteeRejEnvelopeNotSealed' :                 f'{year}AbsenteeRejEnvelopeNotSealed',
+                'QC5iAbsenteeRejNoResidentAddr' :                    f'{year}AbsenteeRejNoResidentAddr',
+                'QC5jAbsenteeRejMultipleBallotsInEnvelope' :         f'{year}AbsenteeRejMultipleBallotsInEnvelope',
+                'QC5kAbsenteeRejVoterDeceased' :                     f'{year}AbsenteeRejVoterDeceased',
+                'QC5lAbsenteeRejAlreadyVoted' :                      f'{year}AbsenteeRejAlreadyVoted',
+                'QC5mAbsenteeRejFirstTimerNoID' :                    f'{year}AbsenteeRejFirstTimerNoID',
+                'QC5nAbsenteeRejNoApplicationOnRecord' :             f'{year}AbsenteeRejNoApplicationOnRecord',
+                'QE1aProvisionalSubmitted' :                         f'{year}TotalProvisionalSubmitted',
+                'QE1bProvisionalCountedFullBallot' :                 f'{year}TotalProvisionalCountedFullBallot',
+                'QE1cProvisionalCountedPartialBallot' :              f'{year}TotalProvisionalCountedPartialBallot',
+                'QE1dProvisionalRejected' :                          f'{year}TotalProvisionalRejected',
+                'QE2aProvisionalRejVoterNotRegistered' :             f'{year}ProvisionalRejVoterNotRegistered',
+                'QE2bProvisionalRejWrongJurisdiction' :              f'{year}ProvisionalRejWrongJurisdiction',
+                'QE2cProvisionalRejWrongPrecinct' :                  f'{year}ProvisionalRejWrongPrecinct',
+                'QE2dProvisionalRejInsufficientID' :                 f'{year}ProvisionalRejInsufficientID',
+                'QE2eProvisionalRejIncompleteOrIllegible' :          f'{year}ProvisionalRejIncompleteOrIllegible',
+                'QE2fProvisionalRejBallotMissionFromEnvelope' :      f'{year}ProvisionalRejBallotMissionFromEnvelope',
+                'QE2gProvisionalRejNoSignature' :                    f'{year}ProvisionalRejNoSignature',
+                'QE2hProvisionalRejNonMatchingSig' :                 f'{year}ProvisionalRejNonMatchingSig',
+                'QE2iProvisionalRejAlreadyVoted' :                   f'{year}ProvisionalRejAlreadyVoted',
+                'QD1aNumPrecincts' :                                 f'{year}OperationsNumPrecincts',
+                'QD2aNumPhysicalPlaces' :                            f'{year}OperationsNumPhysicalPlaces',
+                'QD2bNumPhysicalOtherThanElectionOffices' :          f'{year}OperationsNumPhysicalOtherThanElectionOffices',
+                'QD2fPhysicalEarlyVotingPlaces' :                    f'{year}OperationsPhysicalEarlyVotingPlaces',
+                'QD3aNumPollWorkers' :                               f'{year}OperationsNumPollWorkers',
+                'QD4aPWUnder18' :                                    f'{year}OperationsPWUnder18',
+                'QD4bPW19_25' :                                      f'{year}OperationsPW19_25',
+                'QD4cPW26_40' :                                      f'{year}OperationsPW26_40',
+                'QD4dPW41_60' :                                      f'{year}OperationsPW41_60',
+                'QD4ePW61_70' :                                      f'{year}OperationsPW61_70',
+                'QD4fPW70Plus' :                                     f'{year}OperationsPW70Plus',
+                'QD5PWRecruitingDifficulty' :                        f'{year}OperationsPWRecruitingDifficulty'
             }, axis=1)
 
         # There can be stray columns where
@@ -615,9 +758,18 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # Create the 5-digit FIPS version, where the
         # first two digits designate the State, and
         # remaining 3 denote the county:
+
+        county_FIPS = self.parse_fips_codes(df[[f'FIPSCodeDetailed', 'State']],
+                                            self.geocodes[year])
         
-        df.insert(3, f'FIPSCoarse{year}', df[f'FIPSCodeDetailed'].str[:5])
-        
+        df.insert(3, f'FIPSCoarse{year}', county_FIPS)
+
+        # Remove Guam, Virgin Islands, AMERICAN SAMOA, Puerto Rico:
+        df = df.drop(df[df['State'] == 'GU'].index)
+        df = df.drop(df[df['State'] == 'VI'].index)
+        df = df.drop(df[df['State'] == 'AS'].index)
+        df = df.drop(df[df['State'] == 'PR'].index)
+
         # Make multiindex:
         mindx_df = df[['FIPSCodeDetailed','State','Jurisdiction']].copy()
         mindx_df.columns = ['FIPSDetailed','State','Jurisdiction']
@@ -630,9 +782,10 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                                                 'Election'
                                                 ])
         df.index = mindx
+        # Remove the now superfluous cols:
+        df_final = df.drop(['FIPSCodeDetailed', 'State', 'Jurisdiction'], axis=1)
 
-
-        return df
+        return df_final
 
     #------------------------------------
     # add_swingstate_bool 
@@ -650,8 +803,22 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         @return a new df with Battleground column added
         @rtype: pd.DataFrame
         '''
-        new_col = pd.Series(df[df['State'] in ['AZ','CO','FL','GA','IA','ME','MI','NC','OH','PA','TX','WI']])
-        df['Swingstate'] = new_col
+        # Get rows that are in swing States:
+        swings = df.query("State in ['AZ','CO','FL','GA','IA','ME','MI','NC','OH','PA','TX','WI']")
+        # Get their FIPS:
+        swing_fips = swings.index.get_level_values('FIPSDetailed')
+        
+        # Make a new Swingstate col with all False; same
+        # number of rows as df, where this col will be
+        # adjoined. The index will just be the FIPS codes:
+        swinger_col = pd.Series([False]*len(df), 
+                                name='Swingstate', 
+                                index=df.index.get_level_values('FIPSDetailed'))
+        
+        # Set only the swing state rows to True:
+        swinger_col[swing_fips] = True 
+        df['Swingstate'] = swinger_col.values 
+        
         return df
 
     #------------------------------------
@@ -663,9 +830,192 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         dfs = list(df_dict.values())
         if len(dfs) == 1:
             return dfs[0]
-        new_df = dfs[0].join(dfs[1:], on='FIPSDetailed')
-        return new_df
+        df_merged = dfs[0]
+        for nxt_df in dfs[1:]:
+            df_merged = df_merged.merge(nxt_df, 
+                                        left_on=['FIPSDetailed','State','Jurisdiction'], 
+                                        right_on=['FIPSDetailed','State','Jurisdiction'],
+                                        how='outer')
 
+        return df_merged
+
+    #------------------------------------
+    # parse_fips_codes 
+    #-------------------
+    
+    def parse_fips_codes(self, codes_and_states, geocodes):
+        '''
+        Wisconsin identifies each survey row with a 3-to-5-digit 
+        County Subdivision code instead of the 10-digit codes that everyone
+        else uses. This method finds the respective county codes.
+        
+        Given a column of FIPS codes from that identify each row in 
+        the Election Administration Voting Survey,
+        with a second column containing the two-letter
+        State abbreviation, return a new column of Country FIPS
+        codes where each FIPS code using the 5-col format:
+        ss cccc: state and country. 
+        
+        Assumptions:
+           o FIPS code column is named 'FIPSCodeDetailed'
+           o State 2-letter abbrev is called 'State' 
+        
+        @param codes_and_states: FIPS codes to parse,
+            and their corresponding 2-letter State abbreviations
+        @type codes_and_states: pd.DataFrame
+        @param geocodes: Census geocodes table
+        @type geocodes: pd.DataFrame
+        @return FIPS codes converted to 5-digit convention,
+            if needed.
+        @rtype pd.Series
+        '''
+        
+        # For convenience:
+        fips_codes = codes_and_states['FIPSCodeDetailed']
+
+        # Find FIPS code entries in current survey that
+        # has only 5 or fewer digits: 
+        prob_fips = fips_codes[fips_codes.map(len) <= 5].astype(str)
+        # If all FIPS codes are 10 digits, we know
+        # how to get State and County FIPS from that:
+        # Grab digits 2,3,4 (0-based)
+        if len(prob_fips) == 0:
+            return fips_codes.str[2:5]
+        
+        prob_fips.name = 'Subdivision'
+        
+        # Combine problem FIPS with the official
+        # 2018 table of FIPS codes, using Subdivision
+        # as the join key:
+        
+        probs_info = geocodes.merge(prob_fips, on='Subdivision', how='right')
+        
+        num_bad_rows = probs_info.StateFIPS.isna().sum()
+        self.log.info(f"Number of jurisdictions in survey but not in official FIPS list: {num_bad_rows}")
+
+        # Find all the FIPSCodeDetailed rows where that
+        # code is less than the usual 10 digits, and find
+        # their proper counties:
+        # 
+        # WE NOW HAVE:
+        #        self.state_fips
+        #                      StateFull StateFIPS State
+        #        0                Alabama         1    AL
+        #        1                 Alaska         2    AK
+        # 
+        #        codes_and_states (6460 rows)
+        #             FIPSCodeDetailed State
+        #        0          0100100000    AL
+        #        1          0100300000    AL
+        # 
+        # 
+        #         probs_info (3715 rows)
+        #              StateFIPS County Subdivision      Jurisdiction
+        #         0           23    000          23    MAINE - UOCAVA
+        #         1           23    021       00100        Abbot town
+        #         2           27    111       00100   Aastad township
+        
+        # Add StateFIPS to codes_and_States (6460 rows):
+        
+        code_state_fips = codes_and_states.merge(self.state_fips,
+                               on='State',
+                               how='left'
+                               )
+        # 
+        #               FIPSCodeDetailed State StateFull StateFIPS
+        # 
+        #         0          0100100000    AL   Alabama         01
+        #         1          0100300000    AL   Alabama         01
+        #         2          0100500000    AL   Alabama         01
+        #                                 ...
+        #         1318               23    ME      Maine        23
+        #         4587            00100    WI  Wisconsin        55
+        #         4588            00175    WI  Wisconsin        55
+        #         4589            00225    WI  Wisconsin        55
+        #                                         
+        
+        # Add column County for the normal FIPS of
+        # length > 5. First two digits is State FIPS,
+        # Nexgt three digits is County FIPS. For now,
+        # put nan into the counties with the short FIPS
+        # entries from the survey:
+        code_state_fips['County'] = pd.Series(np.where(code_state_fips.FIPSCodeDetailed.str.len() > 5,
+                                              code_state_fips.FIPSCodeDetailed.str[2:5],
+                                              np.nan))
+        
+        #        code_state_fips (6040 rows)
+        #             FIPSCodeDetailed State StateFull StateFIPS County
+        #        0          0100100000    AL   Alabama         1    001
+        #        1          0100300000    AL   Alabama         1    003
+        #                                      ...
+        #        1318               23    ME      Maine        23    NaN
+        #        4587            00100    WI  Wisconsin        55    NaN
+        #        4588            00175    WI  Wisconsin        55    NaN
+        #        4589            00225    WI  Wisconsin        55    NaN
+
+        # Pull out the rows where the County FIPS is 
+        # now nan:
+        code_state_fips_shorties = code_state_fips[code_state_fips.FIPSCodeDetailed.str.len() <=5]
+        
+        #        FIPSCodeDetailed State  StateFull StateFIPS County (1851)
+        #        1318               23    ME      Maine        23    NaN
+        #        4587            00100    WI  Wisconsin        55    NaN
+        #        4588            00175    WI  Wisconsin        55    NaN
+        
+        # The short codes are subdivision FIPS. 
+        # Grab the proper County FIPS from our info:
+        code_fips_goodies = code_state_fips_shorties.merge(probs_info,
+                                       left_on='FIPSCodeDetailed',
+                                       right_on='Subdivision',
+                                       suffixes=['_Bad','_Good']
+                                       )[['FIPSCodeDetailed', 'StateFIPS_Good', 'County_Good', 'Jurisdiction']]
+        
+        #                   FIPSCodeDetailed StateFIPS_Good County_Good (3715 total, but 1851 unique FIPSCodeDetailed)
+        #              0                  23             23         000
+        #              1               00100             23         021
+        #              2               00100             27         111
+        #              3               00100             34         001
+        #              4               00100             38         077
+        # 
+        #               code_fips_goodies[['FIPSCodeDetailed', 'StateFIPS_Good']].nunique(axis=0)
+        #                  FIPSCodeDetailed    1851
+        #                  StateFIPS_Good        20
+        #                  dtype: int64
+        
+
+        # Enhance our emerging good table with the
+        # now known County FIPS of the short entries:
+        code_state_fips_all = code_state_fips.merge(code_fips_goodies,
+                                                    on='FIPSCodeDetailed',
+                                                    how='left'
+                                                    ).drop_duplicates(subset='FIPSCodeDetailed')
+        
+        #                    (6460)
+        #                    FIPSCodeDetailed State StateFull StateFIPS County StateFIPS_Good County_Good
+        #               0          0100100000    AL   Alabama         1    001            NaN         NaN
+        #               1          0100300000    AL   Alabama         1    003            NaN         NaN
+        #               2          0100500000    AL   Alabama         1    005            NaN         NaN
+        #                                                 ...
+        #               1318               23    ME      Maine        23    NaN             23         000
+        #               4587            00100    WI  Wisconsin        55    NaN             23         021
+        #               4594            00175    WI  Wisconsin        55    NaN             20         153
+        #               4596            00225    WI  Wisconsin        55    NaN             55         067
+        #               4597            00275    WI  Wisconsin        55    NaN             20         131
+        
+        good_counties = code_state_fips_all.County.fillna(code_state_fips_all.County_Good)
+        
+        #                (6460):
+        #                0       001    
+        #                1       003
+        #                2       005
+        #                3       007
+        
+        # Make the County FIPS single column's
+        # index match the survey index. The 
+        # 'drop=True' prevents the current index
+        # of good_counties to be made into a second
+        # column:
+        return good_counties.reset_index(drop=True)
 
     #------------------------------------
     # fit
@@ -727,7 +1077,14 @@ if __name__ == '__main__':
         dfs[year] = xformer.transform(year)
         
     # Combine the dfs:
+    xformer.log.info(f"Combining {len(dfs)} surveys into one...")
     df_all = xformer.join_surveys(dfs)
+    xformer.log.info(f"Done combining {len(dfs)} surveys into one.")
+    
+    xformer.log.info(f"Adding a Swingstate column...")
     df_all = xformer.add_swingstate_bool(df_all)
-        
-    df_all.to_excel(args.outfile)
+    xformer.log.info(f"Done adding a Swingstate column")
+    
+    xformer.log.info(f"Writing result to {args.outfile}...")
+    df_all.to_csv(args.outfile)
+    xformer.log.info(f"Done writing result to {args.outfile}.")

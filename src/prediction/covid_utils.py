@@ -113,8 +113,13 @@ class CovidUtils(object):
         3. self.state_abbrevs: long State names to 2-letter abbreviations
         
            LongName  :   Abbrev
-          {'New York' :   'NY'
+          {'New York' :   'NY',
                ...}
+               
+        4. self.abbrevs_state: 2-letter abbreviations to long State name
+           Abbrev   :  LongName
+        {  'NY'   :   'New York,
+          ...}
         
         @return: dataframe with mapping
         @rtype: pd.DataFrame 
@@ -152,3 +157,7 @@ class CovidUtils(object):
             reader = csv.reader(fd)
             for (longName, abbrev) in reader:
                 CovidUtils.state_abbrevs[longName] = abbrev
+                
+        CovidUtils.abbrevs_state = {abbrev : state_name for 
+                                    (abbrev, state_name) in zip(self.state_abbrevs.values(),
+                                                                self.state_abbrevs.keys())}
