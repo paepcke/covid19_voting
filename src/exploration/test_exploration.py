@@ -51,7 +51,8 @@ class MailVotingTest(unittest.TestCase):
     #****@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_2018(self):
         year = 2018
-        df = ElectionSurveyCleaner().transform(year)
+        xformer = ElectionSurveyCleaner()
+        df = xformer.transform(year)
         self.assertEqual(df.index[0], ('0100100000', 'AL', 'AUTAUGA COUNTY', year))
         durham_vote_count = df.reindex(['DURHAM COUNTY'], 
                                        level='Jurisdiction')[f'{year}ByMailCountBallotsReturned'].item()
@@ -61,10 +62,17 @@ class MailVotingTest(unittest.TestCase):
         self.assertTrue(all(df[f'{year}ByMailCountBallotsReturned'] >= 0))
         
         # Should have no nan in County FIPS cols:
-        self.assertEqual(df[f'FIPSCoarse{year}'].isna().sum(), 0)
+        self.assertEqual(df[f'FIPSCounty{year}'].isna().sum(), 0)
         # Same with State abbreviation and Jurisdiction in the multiindex:
         self.assertEqual(df.index.get_level_values('State').isna().sum(), 0)
         self.assertEqual(df.index.get_level_values('Jurisdiction').isna().sum(), 0)
+        
+        # Spot check one percentage: the rejection rate
+        # of Barbour County in Alabama:
+        percentages = xformer.percentages
+        self.assertEqual(percentages.xs('AL', level='State')
+                            .xs('BARBOUR COUNTY', level='Jurisdiction')['2018PercByMailRejTotal'].item(),
+                            11.168831168831169)
 
     #------------------------------------
     # test_2016
@@ -83,7 +91,7 @@ class MailVotingTest(unittest.TestCase):
         self.assertTrue(all(df[f'{year}TotalVote'] >= 0))
         
         # Should have no nan in County FIPS cols:
-        self.assertEqual(df[f'FIPSCoarse{year}'].isna().sum(), 0)
+        self.assertEqual(df[f'FIPSCounty{year}'].isna().sum(), 0)
         # Same with State abbreviation and Jurisdiction in the multiindex:
         self.assertEqual(df.index.get_level_values('State').isna().sum(), 0)
         self.assertEqual(df.index.get_level_values('Jurisdiction').isna().sum(), 0)
@@ -105,7 +113,7 @@ class MailVotingTest(unittest.TestCase):
         self.assertTrue(all(df[f'{year}TotalVoteByMail'] >= 0))
         
         # Should have no nan in County FIPS cols:
-        self.assertEqual(df[f'FIPSCoarse{year}'].isna().sum(), 0)
+        self.assertEqual(df[f'FIPSCounty{year}'].isna().sum(), 0)
         # Same with State abbreviation and Jurisdiction in the multiindex:
         self.assertEqual(df.index.get_level_values('State').isna().sum(), 0)
         self.assertEqual(df.index.get_level_values('Jurisdiction').isna().sum(), 0)
