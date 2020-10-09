@@ -6,18 +6,21 @@ Created on Sep 30, 2020
 '''
 import argparse
 import os
+from pathlib import Path
 import sys
 
 from sklearn.base import BaseEstimator, TransformerMixin
 
+import numpy as np
+import pandas as pd
+from prediction.covid_utils import CovidUtils
+from utils.logging_service import LoggingService
+
+
 sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from prediction.covid_utils import CovidUtils
 
-import pandas as pd
-import numpy as np
-from utils.logging_service import LoggingService
 
 def catch_non_int(value):
     try:
@@ -254,6 +257,26 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         Constructor
         '''
         self.log = LoggingService()
+        
+        # Place to collect aggregrations 
+        # to percentages for each election. Will be:
+        #    {2018 : {'{year}PercByMailRejTotal'    : <num>,
+        #             '{year}PercByMailRej<reason>' : <num>,
+        #                         ...
+        #             '{year}PercHowVoted<modality>': <num>,
+        #                         ...
+        #             '{year}PercProvRej            : <num>,
+        #             '{year}PercProvRej<reason>    : <num>,
+        #                         ...
+        #    {2016 : {...
+        #    }
+        # At the end we'll flatten into a CSV:
+        
+        self.percentages = {2018 : {},
+                            2016 : {},
+                            2014 : {}
+                            }
+        
         state_fips_file = os.path.join(os.path.dirname(__file__),
                                        '../../data/Exploration/fips_states_only.xlsx')
         
@@ -446,7 +469,7 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                 'E1cProvisionalCountedPartially'      : f'{year}ProvisionalCountCountedPartially',
                 'E1dProvisionalRejected'              : f'{year}ProvisionalCountRejected',
                 'E1CommentsProvisional'               : f'{year}CommentsProvisional',
-                'E2aRejProvisionalTotal'              : f'{year}ProvisionalCountTotal',
+                'E2aRejProvisionalTotal'              : f'{year}ProvisionalRejCountTotal',
                 'E2bRejProvisionalNotRegistered'      : f'{year}ProvisionalRejProvisionalNotRegistered',
                 'E2cRejProvisionalWrongJurisdiction'  : f'{year}ProvisionalRejWrongJurisdiction',
                 'E2dRejProvisionalWrongPrecinct'      : f'{year}ProvisionalRejWrongPrecinct',
@@ -506,7 +529,7 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
 
         county_FIPS = self.parse_fips_codes(df[[f'FIPSCodeDetailed', 'State']],
                                                self.geocodes[year])
-        df.insert(3, f'FIPSCoarse{year}', county_FIPS)
+        df.insert(3, f'FIPSCounty{year}', county_FIPS)
 
         # Remove Guam, Virgin Islands, AMERICAN SAMOA, Puerto Rico:
         df = df.drop(df[df['State'] == 'GU'].index)
@@ -530,8 +553,141 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # Remove the now superfluous cols:
         df_final = df.drop(['FIPSCodeDetailed', 'State', 'Jurisdiction'], axis=1)
         
+        # Fill in the percentage calculations in
+        # self.percentages for 2018:
+        self.compute_percentages_2018(df_final, year)
+        
         return df_final
     
+    #------------------------------------
+    # compute_percentages_2018
+    #-------------------
+    
+    def compute_percentages_2018(self, df, year):
+
+        # Percentage rejected:
+        self.percentages[year][f'{year}PercByMailRejTotal'] = \
+            100 * df[f'{year}ByMailCountByMailRejected'] / df[f'{year}ByMailCountBallotsReturned']
+            
+        # Percentages of reasons why rejected:
+        self.percentages[year][f'{year}PercByMailRejDeadline'] = \
+            100 * df[f'{year}ByMailRejDeadline'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejSignatureMissing'] = \
+            100 * df[f'{year}ByMailRejSignatureMissing'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejWitnessSignature'] = \
+            100 * df[f'{year}ByMailRejWitnessSignature'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejNonMatchingSig'] = \
+            100 * df[f'{year}ByMailRejNonMatchingSig'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejNoElectionOfficialSig'] = \
+            100 * df[f'{year}ByMailRejNoElectionOfficialSig'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejUnofficialEnvelope'] = \
+            100 * df[f'{year}ByMailRejUnofficialEnvelope'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejBallotMissing'] = \
+            100 * df[f'{year}ByMailRejBallotMissing'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejEnvelopeNotSealed'] = \
+            100 * df[f'{year}ByMailRejEnvelopeNotSealed'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejNoAddr'] = \
+            100 * df[f'{year}ByMailRejNoAddr'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejMultipleBallots'] = \
+            100 * df[f'{year}ByMailRejMultipleBallots'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejDeceased'] = \
+            100 * df[f'{year}ByMailRejDeceased'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejAlreadyVoted'] = \
+            100 * df[f'{year}ByMailRejAlreadyVoted'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejNoVoterId'] = \
+            100 * df[f'{year}ByMailRejNoVoterId'] / df[f'{year}ByMailCountByMailRejected']
+
+        self.percentages[year][f'{year}PercByMailRejNoBallotApplication'] = \
+            100 * df[f'{year}ByMailRejNoBallotApplication'] / df[f'{year}ByMailCountByMailRejected']
+
+        # Percentage of provisional ballots:
+        
+        self.percentages[year][f'{year}PercProvisionalsRej'] = \
+            100 *  df[f'{year}ProvisionalRejCountTotal'] / df[f'{year}ProvisionalCountTotal']
+
+        self.percentages[year][f'{year}PercByProvRejNotRegistered'] = \
+            100 * df[f'{year}ProvisionalRejProvisionalNotRegistered'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejWrongJurisdiction'] = \
+            100 * df[f'{year}ProvisionalRejWrongJurisdiction'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejWrongPrecinct'] = \
+            100 * df[f'{year}ProvisionalRejWrongPrecinct'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejNoID'] = \
+            100 * df[f'{year}ProvisionalRejNoID'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejIncomplete'] = \
+            100 * df[f'{year}ProvisionalRejIncomplete'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejBallotMissing'] = \
+            100 * df[f'{year}ProvisionalRejBallotMissing'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejNoSig'] = \
+            100 * df[f'{year}ProvisionalRejNoSig'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejSigNotMatching'] = \
+            100 * df[f'{year}ProvisionalRejSigNotMatching'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejAlreadyVoted'] = \
+            100 * df[f'{year}ProvisionalRejAlreadyVoted'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercProvisionalsRej'] = \
+            100 *  df[f'{year}ProvisionalCountRejected'] / df[f'{year}ProvisionalCountTotal']
+
+        self.percentages[year][f'{year}PercByProvRejNotRegistered'] = \
+            100 * df[f'{year}ProvisionalRejProvisionalNotRegistered'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejWrongJurisdiction'] = \
+            100 * df[f'{year}ProvisionalRejWrongJurisdiction'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejWrongPrecinct'] = \
+            100 * df[f'{year}ProvisionalRejWrongPrecinct'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejNoID'] = \
+            100 * df[f'{year}ProvisionalRejNoID'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejIncomplete'] = \
+            100 * df[f'{year}ProvisionalRejIncomplete'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejBallotMissing'] = \
+            100 * df[f'{year}ProvisionalRejBallotMissing'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejNoSig'] = \
+            100 * df[f'{year}ProvisionalRejNoSig'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejSigNotMatching'] = \
+            100 * df[f'{year}ProvisionalRejSigNotMatching'] / df[f'{year}ProvisionalCountRejected']
+
+        self.percentages[year][f'{year}PercByProvRejAlreadyVoted'] = \
+            100 * df[f'{year}ProvisionalRejAlreadyVoted'] / df[f'{year}ProvisionalCountRejected']
+            
+        # Percentages Voting Modality:
+
+        self.percentages[year][f'{year}PercVoteModusAbroad'] = \
+            100 * df[f'{year}TotalVotedAbroad'] / df[f'{year}TotalVoteCounted']
+
+        self.percentages[year][f'{year}PercVoteModusByMail'] = \
+            100 * df[f'{year}TotalVoteByMail'] / df[f'{year}TotalVoteCounted']
+
+        self.percentages[year][f'{year}PercVoteModusProvisionalBallot'] = \
+            100 * df[f'{year}TotalVoteProvisionalBallot'] / df[f'{year}TotalVoteCounted']
+
+        self.percentages[year][f'{year}PercVoteModusInPersonEarly'] = \
+            100 * df[f'{year}TotalVoteInPersonEarly'] / df[f'{year}TotalVoteCounted']
+
     #------------------------------------
     # clean_survey_2016 
     #-------------------
@@ -635,7 +791,7 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         county_FIPS = self.parse_fips_codes(df[[f'FIPSCodeDetailed', 'State']],
                                             self.geocodes[year])
         
-        df.insert(3, f'FIPSCoarse{year}', county_FIPS)
+        df.insert(3, f'FIPSCounty{year}', county_FIPS)
         
         # Remove Guam, Virgin Islands, AMERICAN SAMOA, Puerto Rico:
         df = df.drop(df[df['State'] == 'GU'].index)
@@ -762,7 +918,7 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         county_FIPS = self.parse_fips_codes(df[[f'FIPSCodeDetailed', 'State']],
                                             self.geocodes[year])
         
-        df.insert(3, f'FIPSCoarse{year}', county_FIPS)
+        df.insert(3, f'FIPSCounty{year}', county_FIPS)
 
         # Remove Guam, Virgin Islands, AMERICAN SAMOA, Puerto Rico:
         df = df.drop(df[df['State'] == 'GU'].index)
@@ -1001,8 +1157,11 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         #               4594            00175    WI  Wisconsin        55    NaN             20         153
         #               4596            00225    WI  Wisconsin        55    NaN             55         067
         #               4597            00275    WI  Wisconsin        55    NaN             20         131
-        
-        good_counties = code_state_fips_all.County.fillna(code_state_fips_all.County_Good)
+        # 
+        # Copy the 'good FIPS' to the County FIPS where the
+        # latter are NaN. Also prepend the respective State FIPS
+        # to create the 5-digit state-county FIPS code:
+        good_counties = code_state_fips_all.StateFIPS.str.cat(code_state_fips_all.County.fillna(code_state_fips_all.County_Good))
         
         #                (6460):
         #                0       001    
@@ -1046,6 +1205,22 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
             df = self.clean_survey_2018(self.EAVS_FILES[2018])
         else:
             raise NotImplementedError(f"No cleanup capability for year {year}")
+        
+        
+        self.log.info("Creating CSV-ready percentages ...")
+        header = ['year']
+        rows   = []
+        
+        for year in self.percentages.keys():
+            row = [year]
+            header.append(self.percentages[year].keys())
+            row.append(self.percentages[year].values())
+            rows.append(row)
+            
+        self.percentages_csv = [header, rows]
+        
+        self.log.info("Done creating CSV-ready percentages .")
+
         return df
 
 # ------------------------ Main ------------
@@ -1086,5 +1261,14 @@ if __name__ == '__main__':
     xformer.log.info(f"Done adding a Swingstate column")
     
     xformer.log.info(f"Writing result to {args.outfile}...")
-    df_all.to_csv(args.outfile)
-    xformer.log.info(f"Done writing result to {args.outfile}.")
+    outpath   = Path(args.outfile)
+    out_csv   = outpath.parent.joinpath(outpath.stem + '.csv')
+    out_excel = outpath.parent.joinpath(outpath.stem + '.xlsx')
+    
+    xformer.log.info(f"Writing result to {out_csv} as CSV...")
+    df_all.to_csv(out_csv)
+    xformer.log.info(f"Done writing result to {out_csv} as CSV.")
+    
+#     xformer.log.info(f"Writing result to {out_excel} as Excel...")
+#     df_all.to_excel(out_excel)
+#     xformer.log.info(f"Done writing result to {out_excel} as Excel.")

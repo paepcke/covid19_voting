@@ -15,8 +15,8 @@ pd.set_option('display.expand_frame_repr', False)
 pd.set_option('max_colwidth', None)
 
 
-TEST_ALL = True
-#TEST_ALL = False
+#****TEST_ALL = True
+TEST_ALL = False
 
 
 class MailVotingTest(unittest.TestCase):
@@ -48,7 +48,7 @@ class MailVotingTest(unittest.TestCase):
     # test_2018
     #-------------------
 
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    #****@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_2018(self):
         year = 2018
         df = ElectionSurveyCleaner().transform(year)
