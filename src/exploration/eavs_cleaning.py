@@ -1029,9 +1029,10 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
             100 * df[f'{year}TotalVoteInPersonEarly'] / df[f'{year}TotalVoteCounted']
         
         # Add the County FIPS:
-        df_perc.insert(0, f'{year}CountyFIPS', f'{year}CountyFIPS')
+        df_perc.insert(0, f'{year}CountyFIPS', df[f'{year}CountyFIPS'])
         
         self.percentages = df_perc
+        return df_perc
 
     #------------------------------------
     # join_surveys

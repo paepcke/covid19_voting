@@ -121,6 +121,29 @@ class MailVotingTest(unittest.TestCase):
         self.assertEqual(df.index.get_level_values('State').isna().sum(), 0)
         self.assertEqual(df.index.get_level_values('Jurisdiction').isna().sum(), 0)
 
+    #------------------------------------
+    # test_percentages_2018 
+    #-------------------
+    
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    def test_percentages_2018(self):
+        year = 2018
+        xformer = ElectionSurveyCleaner()
+        df = xformer.transform(year)
+        df_perc = xformer.percentages
+        
+        self.assertTrue(df_perc['2018CountyFIPS'].eq(df['2018CountyFIPS']).all())
+        # Spot check: percent voted by mail. Use Sweetwater County in WY:
+        
+        sample_row = df.loc[('5603700000', 'WY', 'SWEETWATER COUNTY',2018)]
+        votes_counted = sample_row['2018TotalVoteCounted']
+        votes_by_mail = sample_row['2018TotalVoteByMail']
+        
+        # The following comes to 16.201586
+        perc_computed = 100 * votes_by_mail / votes_counted
+        
+        row = df_perc.xs('SWEETWATER COUNTY', level='Jurisdiction')
+        self.assertTrue(row['2018PercVoteModusByMail'].item() == perc_computed)
 
 # --------------------------- Main ----------
 if __name__ == "__main__":
