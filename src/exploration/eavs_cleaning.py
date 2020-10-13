@@ -774,8 +774,8 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # by replacing the ones that have fewer with the 
         # FIPS County codes followed by zeroes:
         
-        self.ensure_10dig_key(df, countyFIPS) #****** Write this, and call
-                                              #       it from the others as well.
+        #self.ensure_10dig_key(df, countyFIPS) #****** Write this, and call
+        #                                      #       it from the others as well.
 
         # Make multiindex:
         mindx_df = df[['FIPSCodeDetailed','State','Jurisdiction']].rename({'FIPSCodeDetailed' : 'FIPSDetailed'}, axis=1)
@@ -793,33 +793,33 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         return df_final
 
 
-    #------------------------------------
-    # ensure_10dig_key
-    #-------------------
-    
-    def ensure_10dig_key(self, df, countyFIPS):
-        '''
-        Ensures that the FIPSDetailed index consists
-        of unique, 10-digit numbers (as strings).
-        Needed mostly because of Wisconsin, which reports
-        with 5 or fewer digits. The countyFIPS is
-        expected to be a pd series as long as
-        df is high. For current FIPSDetailed with fewer
-        than 10 digits, the method prepends the 5-dig
-        county FIPS, keeps the rest, and fills with
-        '0' if needed.
+#     #------------------------------------
+#     # ensure_10dig_key
+#     #-------------------
+#     
+#     def ensure_10dig_key(self, df, countyFIPS):
+#         '''
+#         Ensures that the FIPSDetailed index consists
+#         of unique, 10-digit numbers (as strings).
+#         Needed mostly because of Wisconsin, which reports
+#         with 5 or fewer digits. The countyFIPS is
+#         expected to be a pd series as long as
+#         df is high. For current FIPSDetailed with fewer
+#         than 10 digits, the method prepends the 5-dig
+#         county FIPS, keeps the rest, and fills with
+#         '0' if needed.
+# 
+#         @param df: EAV survey
+#         @type df: pd.DataFrame
+#         @param countyFIPS: county FIPS for each row
+#         @type countyFIPS: pd.Series
+#         @return: new df with all FIPSDetailed unique,
+#             and 10 chars wide.
+#         @rtype: pd.DataFrame
+#         '''
+#         
+#         df.index['FIPSDetailed']
 
-        @param df: EAV survey
-        @type df: pd.DataFrame
-        @param countyFIPS: county FIPS for each row
-        @type countyFIPS: pd.Series
-        @return: new df with all FIPSDetailed unique,
-            and 10 chars wide.
-        @rtype: pd.DataFrame
-        '''
-        
-        df.index['FIPSDetailed']
-        
         
 
     #------------------------------------
