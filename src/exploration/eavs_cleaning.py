@@ -549,6 +549,10 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # Rename the FIPS col to conform to our norms:
         df = df.rename({county_col_name : f'{year}CountyFIPS'}, axis=1)
 
+        # Remove all rows with three zeroes in the County FIPS.
+        # Those each denote States overall: 01000:Alabama, etc.
+        df = df.drop(df[df[f'{year}CountyFIPS'].str.endswith('000')].index)
+
         # Make multiindex:
         mindx_df = df[['FIPSCodeDetailed','State','Jurisdiction']].copy()
         mindx_df.columns = ['FIPSDetailed','State','Jurisdiction']
@@ -565,11 +569,77 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # Remove the now superfluous cols:
         df_final = df.drop(['FIPSCodeDetailed', 'State', 'Jurisdiction'], axis=1)
         
+        # Several fields are incorrect in the original. Fix some of those:
+        
+        self.set_at(df_final,'AZ', 'NAVAJO COUNTY',f'{year}ByMailCountByMailRejected',211)
+        self.set_at(df_final,'AZ', 'PINAL COUNTY',f'{year}ByMailCountByMailRejected',339)
+        self.set_at(df_final,'FL', 'SARASOTA COUNTY',f'{year}ByMailCountByMailRejected',380)
+        self.set_at(df_final,'FL', 'ST. LUCIE COUNTY',f'{year}ByMailCountByMailRejected',694)
+        self.set_at(df_final,'TX', 'DALLAM COUNTY',f'{year}ByMailCountByMailRejected',7)
+        self.set_at(df_final,'TX', 'LAMPASAS COUNTY',f'{year}ByMailCountByMailRejected',4 )
+        self.set_at(df_final,'TX', 'CASTRO COUNTY',f'{year}ByMailCountByMailRejected', 6)
+        self.set_at(df_final,'TX', 'CHILDRESS COUNTY',f'{year}ByMailCountByMailRejected',2 )
+        self.set_at(df_final,'TX', 'CULBERSON COUNTY',f'{year}ByMailCountByMailRejected',8)
+        self.set_at(df_final,'TX', 'HUNT COUNTY',f'{year}ByMailCountByMailRejected',42)
+        self.set_at(df_final,'TX', 'IRION COUNTY',f'{year}ByMailCountByMailRejected',1)
+        self.set_at(df_final,'TX', 'MARTIN COUNTY',f'{year}ByMailCountByMailRejected',1)
+        self.set_at(df_final,'TX', 'ROBERTS COUNTY',f'{year}ByMailCountByMailRejected',1)
+        self.set_at(df_final,'TX', 'STERLING COUNTY',f'{year}ByMailCountByMailRejected',5)
+
+        # Still bad:
+        # (df_perc > 100).sum() > 0
+        # 2018PercByMailRejDeadline                  True
+        # 2018PercByMailRejAlreadyVoted              True
+        # 2018PercByProvRejNotRegistered             True
+        # 2018PercByProvRejWrongJurisdiction         True
+        # 2018PercByProvRejIncomplete                True
+        # 2018PercVoteModusByMail                    True
+        # 2018PercVoteModusInPersonEarly             True
+
+        
         # Fill in the percentage calculations in
         # self.percentages for 2018:
         self.compute_percentages_2018(df_final, year)
         
         return df_final
+
+    #------------------------------------
+    # set_at 
+    #-------------------
+    
+    def set_at(self, df, state, jurisdiction, col_name, value):
+        '''
+        Set a particular cell's value in a survey df in place.
+        Returns the changed df
+        
+        Ex.: 
+            self.set_at(df, 'AZ', 'NAVAJO COUNTY', '2018ByMailCountByMailRejected', 300.9)
+            
+        There should be an elegant method to do this,
+        but with out 4-level multiindex it's infernal.
+        xs() won't work, b/c it returns a view. And at()/loc()
+        don't work either, likely b/c we never know the 
+        outermost (FIPSDetailed) value.
+        
+        @param df: EAV survey
+        @type df: pd.DataFrame
+        @param state: 2-letter State abbreviation
+        @type state: str
+        @param jurisdiction: name of election jurisdiction
+            (often a County, but not always.)
+        @type jurisdiction: str
+        @param col_name: name of column where the
+            target cell resides
+        @type col_name: str
+        @param value: value to set
+        @type value: <any>
+        @returns the newly changed df
+        @rtype pd.DataFrame
+        '''
+        
+        idx = df.xs([state, jurisdiction], level=['State','Jurisdiction'], drop_level= False).index
+        df.at[idx.item(),col_name] = value
+        return df
 
     #------------------------------------
     # clean_survey_2016 
@@ -699,6 +769,13 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         
         # Rename the FIPS col to conform to our norms:
         df = df.rename({county_col_name : f'{year}CountyFIPS'}, axis=1)
+        
+        # Make *all* the FIPSDetailed values be 10 digits
+        # by replacing the ones that have fewer with the 
+        # FIPS County codes followed by zeroes:
+        
+        self.ensure_10dig_key(df, countyFIPS) #****** Write this, and call
+                                              #       it from the others as well.
 
         # Make multiindex:
         mindx_df = df[['FIPSCodeDetailed','State','Jurisdiction']].rename({'FIPSCodeDetailed' : 'FIPSDetailed'}, axis=1)
@@ -714,6 +791,36 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         df_final = df.drop(['FIPSCodeDetailed', 'State', 'Jurisdiction'], axis=1)
 
         return df_final
+
+
+    #------------------------------------
+    # ensure_10dig_key
+    #-------------------
+    
+    def ensure_10dig_key(self, df, countyFIPS):
+        '''
+        Ensures that the FIPSDetailed index consists
+        of unique, 10-digit numbers (as strings).
+        Needed mostly because of Wisconsin, which reports
+        with 5 or fewer digits. The countyFIPS is
+        expected to be a pd series as long as
+        df is high. For current FIPSDetailed with fewer
+        than 10 digits, the method prepends the 5-dig
+        county FIPS, keeps the rest, and fills with
+        '0' if needed.
+
+        @param df: EAV survey
+        @type df: pd.DataFrame
+        @param countyFIPS: county FIPS for each row
+        @type countyFIPS: pd.Series
+        @return: new df with all FIPSDetailed unique,
+            and 10 chars wide.
+        @rtype: pd.DataFrame
+        '''
+        
+        df.index['FIPSDetailed']
+        
+        
 
     #------------------------------------
     # clean_survey_2014
@@ -904,135 +1011,173 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
 
 
         df_perc = self.percentages
+        df_perc[f'{year}CountyFIPS'] = df[f'{year}CountyFIPS']
         
         # Percentage rejected:
         df_perc[f'{year}PercByMailRejTotal'] = \
-            100 * df[f'{year}ByMailCountByMailRejected'] / df[f'{year}ByMailCountBallotsReturned']
+            self.avg_juris(df[f'{year}ByMailCountByMailRejected'], df[f'{year}ByMailCountBallotsReturned'])
             
         # Percentages of reasons why rejected:
         df_perc[f'{year}PercByMailRejDeadline'] = \
-            100 * df[f'{year}ByMailRejDeadline'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejDeadline'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejSignatureMissing'] = \
-            100 * df[f'{year}ByMailRejSignatureMissing'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejSignatureMissing'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejWitnessSignature'] = \
-            100 * df[f'{year}ByMailRejWitnessSignature'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejWitnessSignature'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejNonMatchingSig'] = \
-            100 * df[f'{year}ByMailRejNonMatchingSig'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejNonMatchingSig'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejNoElectionOfficialSig'] = \
-            100 * df[f'{year}ByMailRejNoElectionOfficialSig'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejNoElectionOfficialSig'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejUnofficialEnvelope'] = \
-            100 * df[f'{year}ByMailRejUnofficialEnvelope'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejUnofficialEnvelope'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejBallotMissing'] = \
-            100 * df[f'{year}ByMailRejBallotMissing'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejBallotMissing'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejEnvelopeNotSealed'] = \
-            100 * df[f'{year}ByMailRejEnvelopeNotSealed'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejEnvelopeNotSealed'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejNoAddr'] = \
-            100 * df[f'{year}ByMailRejNoAddr'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejNoAddr'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejMultipleBallots'] = \
-            100 * df[f'{year}ByMailRejMultipleBallots'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejMultipleBallots'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejDeceased'] = \
-            100 * df[f'{year}ByMailRejDeceased'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejDeceased'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejAlreadyVoted'] = \
-            100 * df[f'{year}ByMailRejAlreadyVoted'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejAlreadyVoted'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejNoVoterId'] = \
-            100 * df[f'{year}ByMailRejNoVoterId'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejNoVoterId'], df[f'{year}ByMailCountByMailRejected'])
 
         df_perc[f'{year}PercByMailRejNoBallotApplication'] = \
-            100 * df[f'{year}ByMailRejNoBallotApplication'] / df[f'{year}ByMailCountByMailRejected']
+            self.avg_juris(df[f'{year}ByMailRejNoBallotApplication'], df[f'{year}ByMailCountByMailRejected'])
 
         # Percentage of provisional ballots:
         
         df_perc[f'{year}PercProvisionalsRej'] = \
-            100 *  df[f'{year}ProvisionalRejCountTotal'] / df[f'{year}ProvisionalCountTotal']
+            self.avg_juris( df[f'{year}ProvisionalRejCountTotal'], df[f'{year}ProvisionalCountTotal'])
 
         df_perc[f'{year}PercByProvRejNotRegistered'] = \
-            100 * df[f'{year}ProvisionalRejProvisionalNotRegistered'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejProvisionalNotRegistered'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejWrongJurisdiction'] = \
-            100 * df[f'{year}ProvisionalRejWrongJurisdiction'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejWrongJurisdiction'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejWrongPrecinct'] = \
-            100 * df[f'{year}ProvisionalRejWrongPrecinct'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejWrongPrecinct'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejNoID'] = \
-            100 * df[f'{year}ProvisionalRejNoID'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejNoID'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejIncomplete'] = \
-            100 * df[f'{year}ProvisionalRejIncomplete'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejIncomplete'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejBallotMissing'] = \
-            100 * df[f'{year}ProvisionalRejBallotMissing'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejBallotMissing'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejNoSig'] = \
-            100 * df[f'{year}ProvisionalRejNoSig'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejNoSig'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejSigNotMatching'] = \
-            100 * df[f'{year}ProvisionalRejSigNotMatching'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejSigNotMatching'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejAlreadyVoted'] = \
-            100 * df[f'{year}ProvisionalRejAlreadyVoted'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejAlreadyVoted'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercProvisionalsRej'] = \
-            100 *  df[f'{year}ProvisionalCountRejected'] / df[f'{year}ProvisionalCountTotal']
+            self.avg_juris( df[f'{year}ProvisionalCountRejected'], df[f'{year}ProvisionalCountTotal'])
 
         df_perc[f'{year}PercByProvRejNotRegistered'] = \
-            100 * df[f'{year}ProvisionalRejProvisionalNotRegistered'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejProvisionalNotRegistered'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejWrongJurisdiction'] = \
-            100 * df[f'{year}ProvisionalRejWrongJurisdiction'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejWrongJurisdiction'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejWrongPrecinct'] = \
-            100 * df[f'{year}ProvisionalRejWrongPrecinct'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejWrongPrecinct'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejNoID'] = \
-            100 * df[f'{year}ProvisionalRejNoID'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejNoID'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejIncomplete'] = \
-            100 * df[f'{year}ProvisionalRejIncomplete'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejIncomplete'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejBallotMissing'] = \
-            100 * df[f'{year}ProvisionalRejBallotMissing'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejBallotMissing'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejNoSig'] = \
-            100 * df[f'{year}ProvisionalRejNoSig'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejNoSig'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejSigNotMatching'] = \
-            100 * df[f'{year}ProvisionalRejSigNotMatching'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejSigNotMatching'], df[f'{year}ProvisionalCountRejected'])
 
         df_perc[f'{year}PercByProvRejAlreadyVoted'] = \
-            100 * df[f'{year}ProvisionalRejAlreadyVoted'] / df[f'{year}ProvisionalCountRejected']
+            self.avg_juris(df[f'{year}ProvisionalRejAlreadyVoted'], df[f'{year}ProvisionalCountRejected'])
             
         # Percentages Voting Modality:
 
         df_perc[f'{year}PercVoteModusAbroad'] = \
-            100 * df[f'{year}TotalVotedAbroad'] / df[f'{year}TotalVoteCounted']
+            self.avg_juris(df[f'{year}TotalVotedAbroad'], df[f'{year}TotalVoteCounted'])
 
         df_perc[f'{year}PercVoteModusByMail'] = \
-            100 * df[f'{year}TotalVoteByMail'] / df[f'{year}TotalVoteCounted']
+            self.avg_juris(df[f'{year}ByMailCountBallotsReturned'], df['2018TotalCountVotesCast'])
 
         df_perc[f'{year}PercVoteModusProvisionalBallot'] = \
-            100 * df[f'{year}TotalVoteProvisionalBallot'] / df[f'{year}TotalVoteCounted']
+            self.avg_juris(df[f'{year}TotalVoteProvisionalBallot'], df['2018TotalCountVotesCast'])
 
         df_perc[f'{year}PercVoteModusInPersonEarly'] = \
-            100 * df[f'{year}TotalVoteInPersonEarly'] / df[f'{year}TotalVoteCounted']
-        
-        # Add the County FIPS:
-        df_perc.insert(0, f'{year}CountyFIPS', df[f'{year}CountyFIPS'])
+            self.avg_juris(df[f'{year}TotalVoteInPersonEarly'], df['2018TotalCountVotesCast'])
         
         self.percentages = df_perc
         return df_perc
+
+    #------------------------------------
+    # avg_juris
+    #-------------------
+    
+    def avg_juris(self, part, whole):
+        '''
+        Returns percentage of part in the whole.
+        Both args are pd.Series. Used for survey
+        responses, where multiple reporting 
+        jurisdictions can be contained within one
+        County FIPS code. Example (note the identidcal
+        state/county: 50 005; Vermont, County 005):
+        
+                                                          SomeResponse
+            5000562200    VT     SAINT JOHNSBURY  2018        309
+            5000564075    VT     SHEFFIELD        2018         18
+            5000569925    VT     STANNARD         2018          5
+            5000571575    VT     SUTTON           2018         29
+
+        Method groups by State, Jurisdiction, and Election, and
+        averages all responses by jurisdictions within the same
+        county.
+        
+        When whole is 0, returns 0. Same if either
+        part or whole are NaN.
+        
+        @param part: number for which percentage is
+            to be computed.
+        @type part: numeric
+        @param whole: the number that is 100%
+        @type whole: numeric
+        @return: percentage, averaged if needed
+        @rtype: [float]
+        '''
+        
+        res = 100 * part.groupby(['State', 'Jurisdiction', 'Election']).mean()/whole
+        res = res.where(~res.isna(),0)
+        res = res.where(res != np.inf,0)
+        return res.values 
 
     #------------------------------------
     # join_surveys
@@ -1323,11 +1468,11 @@ if __name__ == '__main__':
     #out_excel = outpath.parent.joinpath(outpath.stem + '.xlsx')
     
     xformer.log.info(f"Writing detail results to {out_csv_details}...")
-    df_all.to_csv(out_csv_details)
+    df_all.to_csv(out_csv_details, header=True, index=True)
     xformer.log.info(f"Done writing detail results to {out_csv_details}.")
     
     xformer.log.info(f"Writing percentages results to {out_csv_percentages}...")
-    xformer.percentages.to_csv(out_csv_percentages)
+    xformer.percentages.to_csv(out_csv_percentages, header=True, index=True)
     xformer.log.info(f"Done writing percentages results to {out_csv_percentages}.")
 
 
