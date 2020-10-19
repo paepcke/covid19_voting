@@ -13,19 +13,28 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 import numpy as np
 import pandas as pd
-from utils.logging_service import LoggingService
-
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from utils.logging_service import LoggingService
 
-
+def to_int_if_possible(one_col_series):
+    return one_col_series.apply(catch_non_int)
+    
 def catch_non_int(value):
     try:
-        return int(value)
+        int_val = int(value)
+        # Some code 'not available' with negative 
+        # nums, like -99999999:
+        return max(int_val, 0)
     except ValueError:
-        return 0
+        # Detect does not apply, etc.
+        if type(value) == str and (value.startswith('Does not apply') or value.startswith('Data not available')):
+            return 0
+        else:
+            # Probably a string, like a State name:
+            return value
 
 
 class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
@@ -72,6 +81,8 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         'C4pRecOther1ReasonCount' : catch_non_int,
         'C4qRejOther2ReasonTxt' : str,
         'C4qRejOther2ReasonCount' : catch_non_int,
+        'C4rRejOther3ReasonTxt' : str,
+        'C4rRejOther3ReasonCount' : catch_non_int,
         'D1aVotesCast' : catch_non_int,
         'D2aVotedAtPoll' : catch_non_int,
         'D2bVotedEarlyPhysical' : catch_non_int,
@@ -438,6 +449,8 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                 'C4pRejOther1ReasonCount'             : f'{year}ByMailRejOtherReasonCount1',
                 'C4qRejOther2ReasonTxt'               : f'{year}ByMailRejOtherReason2',
                 'C4qRejOther2ReasonCount'             : f'{year}ByMailRejOtherReason2Count',
+                'C4rRejOther3ReasonTxt'               : f'{year}ByMailRejOtherReason3',
+                'C4rRejOther3ReasonCount'             : f'{year}ByMailRejOtherReason3Count',
                 'D1aVotesCast'                        : f'{year}TotalCountVotesCast',
                 'D2aVotedAtPoll'                      : f'{year}TotalCountVotedAtPoll',
                 'D2bVotedEarlyPhysical'               : f'{year}TotalCountVotedEarlyPhysical',
@@ -474,7 +487,7 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                 'E2jRejAlreadyVoted'                  : f'{year}ProvisionalRejAlreadyVoted',
                 'E2kRejProvisionalOther1Txt'          : f'{year}ProvisionalRejOther1Txt',
                 'E2kRejProvisionalOther1Count'        : f'{year}ProvisionalRej1Count',
-                'E2lOtherRejProvisionalOther2Txt'     : f'{year}ProvisionalRejOther2Txt',
+                'E2lRejProvisionalOther2Txt'          : f'{year}ProvisionalRejOther2Txt',
                 'E2lRejProvisionalOther2Count'        : f'{year}ProvisionalRejOther2Count',
                 'E2mRejProvisionalOther3Txt'          : f'{year}ProvisionalRejOther3Txt',
                 'E2nRejProvisionalOther3Count'        : f'{year}RejProvisionalOther3Count',
@@ -571,20 +584,94 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         
         # Several fields are incorrect in the original. Fix some of those:
         
-        self.set_at(df_final,'AZ', 'NAVAJO COUNTY',f'{year}ByMailCountByMailRejected',211)
-        self.set_at(df_final,'AZ', 'PINAL COUNTY',f'{year}ByMailCountByMailRejected',339)
-        self.set_at(df_final,'FL', 'SARASOTA COUNTY',f'{year}ByMailCountByMailRejected',380)
-        self.set_at(df_final,'FL', 'ST. LUCIE COUNTY',f'{year}ByMailCountByMailRejected',694)
-        self.set_at(df_final,'TX', 'DALLAM COUNTY',f'{year}ByMailCountByMailRejected',7)
-        self.set_at(df_final,'TX', 'LAMPASAS COUNTY',f'{year}ByMailCountByMailRejected',4 )
-        self.set_at(df_final,'TX', 'CASTRO COUNTY',f'{year}ByMailCountByMailRejected', 6)
-        self.set_at(df_final,'TX', 'CHILDRESS COUNTY',f'{year}ByMailCountByMailRejected',2 )
-        self.set_at(df_final,'TX', 'CULBERSON COUNTY',f'{year}ByMailCountByMailRejected',8)
-        self.set_at(df_final,'TX', 'HUNT COUNTY',f'{year}ByMailCountByMailRejected',42)
-        self.set_at(df_final,'TX', 'IRION COUNTY',f'{year}ByMailCountByMailRejected',1)
-        self.set_at(df_final,'TX', 'MARTIN COUNTY',f'{year}ByMailCountByMailRejected',1)
-        self.set_at(df_final,'TX', 'ROBERTS COUNTY',f'{year}ByMailCountByMailRejected',1)
-        self.set_at(df_final,'TX', 'STERLING COUNTY',f'{year}ByMailCountByMailRejected',5)
+#         self.set_at(df_final,'AZ', 'NAVAJO COUNTY',f'{year}ByMailCountByMailRejected',211)
+#         self.set_at(df_final,'AZ', 'PINAL COUNTY',f'{year}ByMailCountByMailRejected',339)
+#         self.set_at(df_final,'FL', 'SARASOTA COUNTY',f'{year}ByMailCountByMailRejected',380)
+#         self.set_at(df_final,'FL', 'ST. LUCIE COUNTY',f'{year}ByMailCountByMailRejected',694)
+#         self.set_at(df_final,'TX', 'DALLAM COUNTY',f'{year}ByMailCountByMailRejected',7)
+#         self.set_at(df_final,'TX', 'LAMPASAS COUNTY',f'{year}ByMailCountByMailRejected',4 )
+#         self.set_at(df_final,'TX', 'CASTRO COUNTY',f'{year}ByMailCountByMailRejected', 6)
+#         self.set_at(df_final,'TX', 'CHILDRESS COUNTY',f'{year}ByMailCountByMailRejected',2 )
+#         self.set_at(df_final,'TX', 'CULBERSON COUNTY',f'{year}ByMailCountByMailRejected',8)
+#         self.set_at(df_final,'TX', 'HUNT COUNTY',f'{year}ByMailCountByMailRejected',42)
+#         self.set_at(df_final,'TX', 'IRION COUNTY',f'{year}ByMailCountByMailRejected',1)
+#         self.set_at(df_final,'TX', 'MARTIN COUNTY',f'{year}ByMailCountByMailRejected',1)
+#         self.set_at(df_final,'TX', 'ROBERTS COUNTY',f'{year}ByMailCountByMailRejected',1)
+#         self.set_at(df_final,'TX', 'STERLING COUNTY',f'{year}ByMailCountByMailRejected',5)
+
+        # In 1130 rows the F1a total sum of votes cast
+        # by all the possible modalities is not the
+        # sum of F1b-F1g. Correct those rows:
+    
+        df_totals = df_final[[f'{year}TotalVotedPhysically',           
+                              f'{year}TotalVotedAbroad',               
+                              f'{year}TotalVoteByMail',                
+                              f'{year}TotalVoteProvisionalBallot',     
+                              f'{year}TotalVoteInPersonEarly',         
+                              f'{year}TotalVoteByMailOnlyJurisdiction'
+                              ]]
+        sums_of_vote_modalities = df_totals.sum(axis=1, numeric_only=True)
+        num_bad_modalities = (sums_of_vote_modalities != df_final[f'{year}TotalVoteCounted']).sum()
+        self.log.info(f"Number of 'Sum of vote modalities != total vote' (sum(F1b-g) != F1a): {num_bad_modalities}")
+
+        df_final[f'{year}TotalVoteCounted'] = sums_of_vote_modalities
+        
+        # Same for reasons for provisional votes rejection: in some counties 
+        # the reasons don't add up to the total provisional rejections:
+        # Same for rejections of provisional ballots:
+        df_totals = df_final[[f'{year}ProvisionalRejProvisionalNotRegistered',
+                              f'{year}ProvisionalRejWrongJurisdiction',       
+                              f'{year}ProvisionalRejWrongPrecinct',           
+                              f'{year}ProvisionalRejNoID',                    
+                              f'{year}ProvisionalRejIncomplete',              
+                              f'{year}ProvisionalRejBallotMissing',           
+                              f'{year}ProvisionalRejNoSig',                   
+                              f'{year}ProvisionalRejSigNotMatching',          
+                              f'{year}ProvisionalRejAlreadyVoted',
+                              f'{year}ProvisionalRejOther1Txt',  
+                              f'{year}ProvisionalRej1Count',     
+                              f'{year}ProvisionalRejOther2Txt',  
+                              f'{year}ProvisionalRejOther2Count',
+                              f'{year}ProvisionalRejOther3Txt',  
+                              f'{year}RejProvisionalOther3Count'
+                              ]]
+                              
+        sums_prov_rej = df_totals.sum(axis=1, numeric_only=True)
+        num_bad_prov_rej = (sums_prov_rej != df_final[f'{year}ProvisionalRejCountTotal']).sum()
+        self.log.info(f"Number of 'Sum of rejected provisionals != total num of provisionals' (sum(E2b-j) != E2a): {num_bad_prov_rej}")
+        
+        df_final[f'{year}ProvisionalRejCountTotal'] = sums_prov_rej
+        
+        # Same for rejections of vote by mail:
+
+        df_totals = df_final[[f'{year}ByMailRejDeadline',
+                              f'{year}ByMailRejSignatureMissing',
+                              f'{year}ByMailRejWitnessSignature',
+                              f'{year}ByMailRejNonMatchingSig',
+                              f'{year}ByMailRejNoElectionOfficialSig',
+                              f'{year}ByMailRejUnofficialEnvelope',
+                              f'{year}ByMailRejBallotMissing',
+                              f'{year}ByMailRejEnvelopeNotSealed',
+                              f'{year}ByMailRejNoAddr',
+                              f'{year}ByMailRejMultipleBallots',
+                              f'{year}ByMailRejDeceased',
+                              f'{year}ByMailRejAlreadyVoted',
+                              f'{year}ByMailRejNoVoterId',
+                              f'{year}ByMailRejNoBallotApplication',
+                              f'{year}ByMailRejOtherReason1',
+                              f'{year}ByMailRejOtherReasonCount1',
+                              f'{year}ByMailRejOtherReason2',
+                              f'{year}ByMailRejOtherReason2Count',
+                              f'{year}ByMailRejOtherReason3',
+                              f'{year}ByMailRejOtherReason3Count'
+                              ]]
+
+        sums_mail_rej = df_totals.sum(axis=1, numeric_only=True)
+        num_bad_mail_rej = (sums_mail_rej != df_final[f'{year}ByMailCountByMailRejected']).sum()
+        self.log.info(f"Number of 'Sum of rejected mail-ins != total num of mail-ins' (sum(C4b-o) != C4a): {num_bad_mail_rej}")
+        
+        df_final[f'{year}ByMailCountByMailRejected'] = sums_mail_rej
+
 
         # Still bad:
         # (df_perc > 100).sum() > 0
@@ -598,8 +685,8 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
 
         
         # Fill in the percentage calculations in
-        # self.percentages for 2018:
-        self.compute_percentages_2018(df_final, year)
+        # self.percentages for 2018
+        self.percentages = self.compute_percentages_2018(df_final, year)
         
         return df_final
 
@@ -1013,6 +1100,11 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         df_perc = self.percentages
         df_perc[f'{year}CountyFIPS'] = df[f'{year}CountyFIPS']
         
+        # VOTE BY MAIL
+
+        df_perc[f'{year}PercByMailTotal'] = \
+            self.avg_juris(df[f'{year}TotalVoteByMail'], df[f'{year}TotalVoteCounted'])
+        
         # Percentage rejected:
         df_perc[f'{year}PercByMailRejTotal'] = \
             self.avg_juris(df[f'{year}ByMailCountByMailRejected'], df[f'{year}ByMailCountBallotsReturned'])
@@ -1127,16 +1219,12 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         df_perc[f'{year}PercVoteModusAbroad'] = \
             self.avg_juris(df[f'{year}TotalVotedAbroad'], df[f'{year}TotalVoteCounted'])
 
-        df_perc[f'{year}PercVoteModusByMail'] = \
-            self.avg_juris(df[f'{year}ByMailCountBallotsReturned'], df['2018TotalCountVotesCast'])
-
         df_perc[f'{year}PercVoteModusProvisionalBallot'] = \
             self.avg_juris(df[f'{year}TotalVoteProvisionalBallot'], df['2018TotalCountVotesCast'])
 
         df_perc[f'{year}PercVoteModusInPersonEarly'] = \
             self.avg_juris(df[f'{year}TotalVoteInPersonEarly'], df['2018TotalCountVotesCast'])
         
-        self.percentages = df_perc
         return df_perc
 
     #------------------------------------
@@ -1171,13 +1259,14 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         @param whole: the number that is 100%
         @type whole: numeric
         @return: percentage, averaged if needed
-        @rtype: [float]
+        @rtype: pd.Series
         '''
         
-        res = 100 * part.groupby(['State', 'Jurisdiction', 'Election']).mean()/whole
+        #res = 100 * part.groupby(['State', 'Jurisdiction', 'Election']).mean()/whole
+        res = 100 * part/whole
         res = res.where(~res.isna(),0)
         res = res.where(res != np.inf,0)
-        return res.values 
+        return res 
 
     #------------------------------------
     # join_surveys

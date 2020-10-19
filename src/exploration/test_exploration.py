@@ -137,13 +137,13 @@ class MailVotingTest(unittest.TestCase):
         
         sample_row = df.loc[('5603700000', 'WY', 'SWEETWATER COUNTY',year)]
         votes_counted = sample_row[f'{year}TotalVoteCounted']
-        votes_by_mail = sample_row[f'{year}ByMailCountBallotsReturned']
+        votes_by_mail = sample_row[f'{year}TotalVoteByMail']
         
         # The following comes to 16.201586
         perc_computed = 100 * votes_by_mail / votes_counted
         
         row = df_perc.xs('SWEETWATER COUNTY', level='Jurisdiction')
-        self.assertTrue(row[f'{year}PercVoteModusByMail'].item() == perc_computed)
+        self.assertTrue(row['2018PercByMailTotal'].item() == perc_computed)
         
         self.assertEqual(df.xs(['WY','WESTON COUNTY'],
                                level=['State','Jurisdiction'])['2018ByMailCountBallotsSent'].item(),
