@@ -13,19 +13,38 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 import numpy as np
 import pandas as pd
-from utils.logging_service import LoggingService
-
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from spreadsheet_colname_mappings import spreadsheet_maps
+from utils.logging_service import LoggingService
 
-
+def to_int_if_possible(one_row_series):
+    # The FIPSCode looks like an int, but must
+    # be treated like a str to preserve leading
+    # zeroes. This is done during rexad_excel():
+    if one_row_series.name == 'FIPSCode':
+        return one_row_series
+    return one_row_series.apply(catch_non_int)
+    
 def catch_non_int(value):
     try:
-        return int(value)
+        int_val = int(value)
+        # Some code 'not available' with negative 
+        # nums, like -99999999:
+        return max(int_val, 0)
     except ValueError:
-        return 0
+        # Detect does not apply, etc.
+        if type(value) == str and \
+            (value.startswith('Does not apply') or \
+             value.startswith('Data not available') or \
+             value.startswith('-999') or \
+             value.startswith('-888')):
+            return 0
+        else:
+            # Probably a string, like a State name:
+            return value
 
 
 class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
@@ -39,213 +58,9 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                             2016: os.path.join(os.path.dirname(__file__),
                                                '../../data/Exploration/inAbsentia2016.xlsx'),
                             2018: os.path.join(os.path.dirname(__file__),
-                                               '../../data/Exploration/inAbsentia2018.xlsx')
+                                               '../../data/Exploration/EAVS_2018_for_Public_Release_Updates3.xlsx')
+                                               #'../../data/Exploration/inAbsentia2018.xlsx')
                             }
-    INT_CONVERSIONS2018 = {
-        'FIPSCode' : str,
-        'Jurisdiction_Name' : str,
-        'State_Full' : str,
-        'State_Abbr' : str,
-        'C1aMailBallotsSent' : catch_non_int,
-        'C1bMailBallotsReturned' : catch_non_int,
-        'C1cUndeliverable' : catch_non_int,
-        'C1dVoided' : catch_non_int,
-        'C1eVotedInPerson' : catch_non_int,
-        'C2aPermanentByMailTransmitted' : catch_non_int,
-        'C3aByMailCounted' : catch_non_int,
-        'C4aByMailRejected' : catch_non_int,
-        'C4bRejDeadline' : catch_non_int,
-        'C4cRejSignatureMissing' : catch_non_int,
-        'C4dRejWitnessSignature' : catch_non_int,
-        'C4eRejNonMatchingSig' : catch_non_int,
-        'C4fRejNoElectionOfficialSig' : catch_non_int,
-        'C4gRejUnofficialEnvelope' : catch_non_int,
-        'C4hRejBallotMissing' : catch_non_int,
-        'C4iRejEnvelopeNotSealed' : catch_non_int,
-        'C4jRejNoAddr' : catch_non_int,
-        'C4kRejMultipleBallots' : catch_non_int,
-        'C4lRejDeceased' : catch_non_int,
-        'C4mRejAlreadyVoted' : catch_non_int,
-        'C4nRejNoVoterId' : catch_non_int,
-        'C4oRejNoBallotApplication' : catch_non_int,
-        'C4pRejOther1ReasonTxt' : str,
-        'C4pRecOther1ReasonCount' : catch_non_int,
-        'C4qRejOther2ReasonTxt' : str,
-        'C4qRejOther2ReasonCount' : catch_non_int,
-        'D1aVotesCast' : catch_non_int,
-        'D2aVotedAtPoll' : catch_non_int,
-        'D2bVotedEarlyPhysical' : catch_non_int,
-        'D2CommentsEarlyVotingPhysical' : catch_non_int,
-        'D3aNumOfPrecincts' : catch_non_int,
-        'D4aNumPollingPlacesElectDay' : catch_non_int,
-        'D5aNumEarlyVotingPlaces' : catch_non_int,
-        'D6NumPollWorkersElectDay' : catch_non_int,
-        'D7NumPollWorkersEarlyVoting' : catch_non_int,
-        'D6_D7CommentsPollingStationComments' : str,
-        'D8aNumPollWorkers' : catch_non_int,
-        'D8bPWUnder18' : catch_non_int,
-        'D8cPW18_25' : catch_non_int,
-        'D8d26_40' : catch_non_int,
-        'D8ePW41_60' : catch_non_int,
-        'D8fPW61_70' : catch_non_int,
-        'D8gPW71Plus' : catch_non_int,
-        'D8CommentsPW' : catch_non_int,
-        'D9PWRecruitingDifficulties' : catch_non_int,
-        'E1aProvisionalTotal' : catch_non_int,
-        'E1bProvisionalCountedFully' : catch_non_int,
-        'E1cProvisionalCountedPartially' : catch_non_int,
-        'E1dProvisionalRejected' : catch_non_int,
-        'E1CommentsProvisional' : catch_non_int,
-        'E2aRejProvisionalTotal' : catch_non_int,
-        'E2bRejProvisionalNotRegistered' : catch_non_int,
-        'E2cRejProvisionalWrongJurisdiction' : catch_non_int,
-        'E2dRejProvisionalWrongPrecinct' : catch_non_int,
-        'E2eRejProvisionalNoID' : catch_non_int,
-        'E2fRejProvisionalIncomplete' : catch_non_int,
-        'E2gRejProvisionalBallotMissing' : catch_non_int,
-        'E2hRejProvisionalNoSig' : catch_non_int,
-        'E2iRejProvisionalSigNotMatching' : catch_non_int,
-        'E2jRejAlreadyVoted' : catch_non_int,
-        'E2kRejProvisionalOther1Txt' : str,
-        'E2kRejProvisionalOther1Count' : catch_non_int,
-        'E2lRejProvisionalOther2Txt' : str,
-        'E2lRejProvisionalOther2Count' : catch_non_int,
-        'E2mRejProvisionalOther3Txt' : str,
-        'E2nRejProvisionalOther3Count' : catch_non_int,
-        'F1aVoteCounted' : catch_non_int,
-        'F1bVotedPhysically' : catch_non_int,
-        'F1cVotedAbroad' : catch_non_int,
-        'F1dVoteByMail' : catch_non_int,
-        'F1eVoteProvisionalBallot' : catch_non_int,
-        'F1fVoteInPersonEarly' : catch_non_int,
-        'F1gVoteByMailJurisdiction' : catch_non_int
-    }
- 
-    INT_CONVERSIONS2016 = {
-        'F1aVoterTurnout' : catch_non_int,
-        'F1bVoteAtPhysical' : catch_non_int,
-        'F1cVoteAbroad' : catch_non_int,
-        'F1dVoteAbsentee' : catch_non_int,
-        'F1eVoteProvisional' : catch_non_int,
-        'F1fVoteEarlyPhysical' : catch_non_int,
-        'F1gVoteByMail' : catch_non_int,
-        'F3VoteFirstTimersIDNeededAndProvided' : catch_non_int,
-        'E1aProvisionalTotal' : catch_non_int,
-        'E1bProvisionalCountedFull' : catch_non_int,
-        'E1cProvisionalCountedPartially' : catch_non_int,
-        'E1dProvisionalRejectedTotal' : catch_non_int,
-        'E2aProvisionalRejVoterNotInState' : catch_non_int,
-        'E2bProvisionalRejWrongJurisdiction' : catch_non_int,
-        'E2cProvisionalRejWrongPrecinct' : catch_non_int,
-        'E2dProvisionalRejInsufficientID' : catch_non_int,
-        'E2eProvisionalRejIncompleteOrIllegible' : catch_non_int,
-        'E2fProvisionalRejBallotMissing' : catch_non_int,
-        'E2gProvisionalRejNoSig' : catch_non_int,
-        'E2hProvisionalRejNonMatchingSig' : catch_non_int,
-        'E2iProvisionalRejAlreadyVoted' : catch_non_int,
-        'E2j_OtherProvisionalRejOther' : catch_non_int,
-        'C1aAbsenteeSent' : catch_non_int,
-        'C1bAbsenteeReturnedForCounting' : catch_non_int,
-        'C1cAbsenteeReturnedUndeliverable' : catch_non_int,
-        'C1dAbsenteeSpoiled' : catch_non_int,
-        'C2AbsenteePermanentList?' : catch_non_int,
-        'C3AbsenteeSentBecauseOnPermanentList' : catch_non_int,
-        'C4aAbsenteeCounted' : catch_non_int,
-        'C4bAbsenteeRejected' : catch_non_int,
-        'C5aAbsenteeRejLate' : catch_non_int,
-        'C5bAbsenteeRejNoSig' : catch_non_int,
-        'C5cAbsenteeRejNoWitnessSig' : catch_non_int,
-        'C5dAbsenteeRejSigNotMatching' : catch_non_int,
-        'C5eAbsenteeRejNoElectOfficialSig' : catch_non_int,
-        'C5fAbsenteeRejUnofficialEnvelope' : catch_non_int,
-        'C5gAbsenteeRejBallotMissing' : catch_non_int,
-        'C5hAbsenteeRejEnvNotSealed' : catch_non_int,
-        'C5iAbsenteeRejNoResidentAddr' : catch_non_int,
-        'C5jAbsenteeRejMultipleBallots' : catch_non_int,
-        'C5kAbsenteeRejVoterDeceased' : catch_non_int,
-        'C5lAbsenteeRejAlreadyVoted' : catch_non_int,
-        'C5mAbsenteeRejFirstTimeVoterBadID' : catch_non_int,
-        'C5nAbsenteeRejNoApplication' : catch_non_int,
-        'D1aNumPrecincts' : catch_non_int,
-        'D2aNumPollingPlaces' : catch_non_int,
-        'D3aNumPollingWorkers' : catch_non_int,
-        'D4aPWUnder18' : catch_non_int,
-        'D4bPW18_25' : catch_non_int,
-        'D4c26_40' : catch_non_int,
-        'D4dPW41_60' : catch_non_int,
-        'D4ePW61_70' : catch_non_int,
-        'D4fPWOver70' : catch_non_int,
-        'D5PWRecruitingDifficulty' : catch_non_int
-        }
-
-    INT_CONVERSIONS2014 = {
-        'FIPSCode' : str,
-        'PreferredOrder' : str,
-        'State' : str,
-        'Jurisdiction' : str,
-        'QF1aVoteTotalCount' : catch_non_int,
-        'QF1bVoteNumInPhysicalLoc' : catch_non_int,
-        'QF1cVoteAbroad' : catch_non_int,
-        'QF1dVoteAbsentee' : catch_non_int,
-        'QF1eVoteProvisional' : catch_non_int,
-        'QF1fVoteAtEarlyVoteCenter' : catch_non_int,
-        'QF1gVoteByMail' : catch_non_int,
-        'QF3VoteProvidedID' : catch_non_int,
-        'QF3_CommentVote' : catch_non_int,
-        'QC1aNumAbsenteeBallotsTransmitted' : catch_non_int,
-        'QC1bAbsenteeSentInForCounting' : catch_non_int,
-        'QC1dAbsenteeSpoiled' : catch_non_int,
-        'QC1eAbsenteeNotReturnedByVoter' : catch_non_int,
-        'QC2AbsenteeHavePermanentListAutoSend' : catch_non_int,
-        'QC3AbsenteeNumSentFromPermanentList' : catch_non_int,
-        'QC4aAbsenteeTotalCounted' : catch_non_int,
-        'QC4bAbsenteeNumRejected' : catch_non_int,
-        'QC5aAbsenteeRejDeadline' : catch_non_int,
-        'QC5bAbsenteeRejNoVoterSig' : catch_non_int,
-        'QC5cAbsenteeRejNoWitnessSig' : catch_non_int,
-        'QC5dAbsenteeRejNonMatchingSig' : catch_non_int,
-        'QC5eAbsenteeRejNoElectionOfficialSig' : catch_non_int,
-        'QC5fAbsenteeRejUnofficialEnvelope' : catch_non_int,
-        'QC5gAbsenteeRejBallotMissing' : catch_non_int,
-        'QC5hAbsenteeRejEnvelopeNotSealed' : catch_non_int,
-        'QC5iAbsenteeRejNoResidentAddr' : catch_non_int,
-        'QC5jAbsenteeRejMultipleBallotsInEnvelope' : catch_non_int,
-        'QC5kAbsenteeRejVoterDeceased' : catch_non_int,
-        'QC5lAbsenteeRejAlreadyVoted' : catch_non_int,
-        'QC5mAbsenteeRejFirstTimerNoID' : catch_non_int,
-        'QC5nAbsenteeRejNoApplicationOnRecord' : catch_non_int,
-        'QE1aProvisionalSubmitted' : catch_non_int,
-        'QE1bProvisionalCountedFullBallot' : catch_non_int,
-        'QE1cProvisionalCountedPartialBallot' : catch_non_int,
-        'QE1dProvisionalRejected' : catch_non_int,
-        'QE2aProvisionalRejVoterNotRegistered' : catch_non_int,
-        'QE2bProvisionalRejWrongJurisdiction' : catch_non_int,
-        'QE2cProvisionalRejWrongPrecinct' : catch_non_int,
-        'QE2dProvisionalRejInsufficientID' : catch_non_int,
-        'QE2eProvisionalRejIncompleteOrIllegible' : catch_non_int,
-        'QE2fProvisionalRejBallotMissionFromEnvelope' : catch_non_int,
-        'QE2gProvisionalRejNoSignature' : catch_non_int,
-        'QE2hProvisionalRejNonMatchingSig' : catch_non_int,
-        'QE2iProvisionalRejAlreadyVoted' : catch_non_int,
-        'QD1aNumPrecincts' : catch_non_int,
-        'QD2aNumPhysicalPlaces' : catch_non_int,
-        'QD2bNumPhysicalOtherThanElectionOffices' : catch_non_int,
-        'QD2fPhysicalEarlyVotingPlaces' : catch_non_int,
-        'QD3aNumPollWorkers' : catch_non_int,
-        'QD4aPWUnder18' : catch_non_int,
-        'QD4bPW19_25' : catch_non_int,
-        'QD4cPW26_40' : catch_non_int,
-        'QD4dPW41_60' : catch_non_int,
-        'QD4ePW61_70' : catch_non_int,
-        'QD4fPW70Plus' : catch_non_int,
-        'QD5PWRecruitingDifficulty' : catch_non_int
-        }
-
-
-    INT_CONVERSIONS = {2018 : INT_CONVERSIONS2018,
-                       2016 : INT_CONVERSIONS2016,
-                       2014 : INT_CONVERSIONS2014
-                       }
 
     #------------------------------------
     # Constructor 
@@ -305,13 +120,14 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         2018, 2016, 2014. Initializes
         
            self.geocodes{year}
-           
-        for year in {2014,2016, 2018}
         '''
 
         self.geocodes = {}
         
-        for year in [2014, 2016, 2018]:
+        #*********
+        #for year in [2014, 2016, 2018]:
+        for year in [2018]:
+        #*********
             # Get reference to the Census geo codes:
             geocode_file = os.path.join(os.path.dirname(__file__),
                                         f'../../data/Exploration/all-geocodes-v{year}.xlsx')
@@ -358,7 +174,7 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                                   'Jurisdiction' : 'Racine County'
                                   }, index=[len(self.geocodes[year])])
         self.geocodes[2018] = pd.concat([self.geocodes[2018], new_entry], axis=0)
-         
+           
         # Fix missing Maine abroad entry:
         new_entry = pd.DataFrame({'StateFIPS'   : '23',
                                   'County'      : '000',
@@ -366,25 +182,27 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
                                   'Jurisdiction': 'MAINE - UOCAVA'
                                   }, index=[len(self.geocodes)])
         self.geocodes[2018] = pd.concat([self.geocodes[2018], new_entry], axis=0)
-
-        # Fixes for 2016:
-        # ---------------
-        
-        new_entry = pd.DataFrame({'StateFIPS'    : '55',
-                                  'County'       : '139',
-                                  'Subdivision'  : '26982',
-                                  'Jurisdiction' : 'Winnebago County'
-                                  }, index=[len(self.geocodes[year])])
-        self.geocodes[2016] = pd.concat([self.geocodes[2016], new_entry], axis=0)
  
-        # Fix missing Fox Crossing village:
-        new_entry = pd.DataFrame({'StateFIPS'   : '55',
-                                  'County'      : '139',
-                                  'Subdivision' : '0000',
-                                  'Jurisdiction': 'Fox Crossing village'
-                                  }, index=[len(self.geocodes)])
- 
-        self.geocodes[2016] = pd.concat([self.geocodes[2016], new_entry], axis=0)
+#*************
+#         # Fixes for 2016:
+#         # ---------------
+#          
+#         new_entry = pd.DataFrame({'StateFIPS'    : '55',
+#                                   'County'       : '139',
+#                                   'Subdivision'  : '26982',
+#                                   'Jurisdiction' : 'Winnebago County'
+#                                   }, index=[len(self.geocodes[year])])
+#         self.geocodes[2016] = pd.concat([self.geocodes[2016], new_entry], axis=0)
+#    
+#         # Fix missing Fox Crossing village:
+#         new_entry = pd.DataFrame({'StateFIPS'   : '55',
+#                                   'County'      : '139',
+#                                   'Subdivision' : '0000',
+#                                   'Jurisdiction': 'Fox Crossing village'
+#                                   }, index=[len(self.geocodes)])
+#    
+#         self.geocodes[2016] = pd.concat([self.geocodes[2016], new_entry], axis=0)
+#*************
 
     #------------------------------------
     # clean_survey_2018 
@@ -396,9 +214,9 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         self.log.info(f"Reading Election Administration and Voting Survey for {year}...")
         sheet = pd.read_excel(io=survey_file,
                               header=[0],
-                              dtype={'FIPSCode' : str},
-                              converters=self.INT_CONVERSIONS[year]
-                              )        
+                              usecols=spreadsheet_maps[year],
+                              dtype={'FIPSCode' : str})
+
         self.log.info(f"Done reading Election Administration and Voting Survey for {year}.")
         # Sometimes a col 'PreferredOrder sneaks in:
         try:
@@ -406,104 +224,19 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         except KeyError:
             pass
 
+        # Turn numbers to ints, except for FIPS Code:
+        sheet = sheet.apply(to_int_if_possible, axis=0, result_type='broadcast')
 
-        df = sheet.rename({
-                'FIPSCode'                            : f'FIPSCodeDetailed',
-                'Jurisdiction_Name'                   : f'Jurisdiction',
-                'State_Full'                          : f'{year}State_Full',
-                'State_Abbr'                          : f'{year}State_Abbr',
-                'C1aMailBallotsSent'                  : f'{year}ByMailCountBallotsSent',
-                'C1bMailBallotsReturned'              : f'{year}ByMailCountBallotsReturned',
-                'C1cUndeliverable'                    : f'{year}ByMailRejUndeliverable',
-                'C1dVoided'                           : f'{year}ByMailRejVoided',
-                'C1eVotedInPerson'                    : f'{year}ByMailRejVotedInPerson',
-                'C2aPermanentByMailTransmitted'       : f'{year}ByMailCountPermanentByMailTransmitted',
-                'C3aByMailCounted'                    : f'{year}ByMailCountCounted',
-                'C4aByMailRejected'                   : f'{year}ByMailCountByMailRejected',
-                'C4bRejDeadline'                      : f'{year}ByMailRejDeadline',
-                'C4cRejSignatureMissing'              : f'{year}ByMailRejSignatureMissing',
-                'C4dRejWitnessSignature'              : f'{year}ByMailRejWitnessSignature',
-                'C4eRejNonMatchingSig'                : f'{year}ByMailRejNonMatchingSig',
-                'C4fRejNoElectionOfficialSig'         : f'{year}ByMailRejNoElectionOfficialSig',
-                'C4gRejUnofficialEnvelope'            : f'{year}ByMailRejUnofficialEnvelope',
-                'C4hRejBallotMissing'                 : f'{year}ByMailRejBallotMissing',
-                'C4iRejEnvelopeNotSealed'             : f'{year}ByMailRejEnvelopeNotSealed',
-                'C4jRejNoAddr'                        : f'{year}ByMailRejNoAddr',
-                'C4kRejMultipleBallots'               : f'{year}ByMailRejMultipleBallots',
-                'C4lRejDeceased'                      : f'{year}ByMailRejDeceased',
-                'C4mRejAlreadyVoted'                  : f'{year}ByMailRejAlreadyVoted',
-                'C4nRejNoVoterId'                     : f'{year}ByMailRejNoVoterId',
-                'C4oRejNoBallotApplication'           : f'{year}ByMailRejNoBallotApplication',
-                'C4pRejOther1ReasonTxt'               : f'{year}ByMailRejOtherReason1',
-                'C4pRejOther1ReasonCount'             : f'{year}ByMailRejOtherReasonCount1',
-                'C4qRejOther2ReasonTxt'               : f'{year}ByMailRejOtherReason2',
-                'C4qRejOther2ReasonCount'             : f'{year}ByMailRejOtherReason2Count',
-                'D1aVotesCast'                        : f'{year}TotalCountVotesCast',
-                'D2aVotedAtPoll'                      : f'{year}TotalCountVotedAtPoll',
-                'D2bVotedEarlyPhysical'               : f'{year}TotalCountVotedEarlyPhysical',
-                'D2CommentsEarlyVotingPhysical'       : f'{year}CommentsEarlyVotingPhysical',
-                'D3aNumOfPrecincts'                   : f'{year}OperationsNumOfPrecincts',
-                'D4aNumPollingPlacesElectDay'         : f'{year}OperationsNumPollingPlacesElectDay',
-                'D5aNumEarlyVotingPlaces'             : f'{year}OperationsNumEarlyVotingPlaces',
-                'D6NumPollWorkersElectDay'            : f'{year}OperationsNumPollWorkersElectDay',
-                'D7NumPollWorkersEarlyVoting'         : f'{year}OperationsNumPollWorkersEarlyVoting',
-                'D6_D7CommentsPollingStationComments' : f'{year}OperationsPollingStationComments',
-                'D8aNumPollWorkers'                   : f'{year}OperationsNumPollWorkers',
-                'D8bPWUnder18'                        : f'{year}OperationsPWUnder18',
-                'D8cPW18_25'                          : f'{year}OperationsPW18_25',
-                'D8d26_40'                            : f'{year}OperationsPW26_40',
-                'D8ePW41_60'                          : f'{year}OperationsPW41_60',
-                'D8fPW61_70'                          : f'{year}OperationsPW61_70',
-                'D8gPW71Plus'                         : f'{year}OperationsPW71Plus',
-                'D8CommentsPW'                        : f'{year}OperationsPWComments',
-                'D9PWRecruitingDifficulties'          : f'{year}OperationsPWRecruitingDifficulties',
-                'E1aProvisionalTotal'                 : f'{year}ProvisionalCountTotal',
-                'E1bProvisionalCountedFully'          : f'{year}ProvisionalCountCountedFully',
-                'E1cProvisionalCountedPartially'      : f'{year}ProvisionalCountCountedPartially',
-                'E1dProvisionalRejected'              : f'{year}ProvisionalCountRejected',
-                'E1CommentsProvisional'               : f'{year}CommentsProvisional',
-                'E2aRejProvisionalTotal'              : f'{year}ProvisionalRejCountTotal',
-                'E2bRejProvisionalNotRegistered'      : f'{year}ProvisionalRejProvisionalNotRegistered',
-                'E2cRejProvisionalWrongJurisdiction'  : f'{year}ProvisionalRejWrongJurisdiction',
-                'E2dRejProvisionalWrongPrecinct'      : f'{year}ProvisionalRejWrongPrecinct',
-                'E2eRejProvisionalNoID'               : f'{year}ProvisionalRejNoID',
-                'E2fRejProvisionalIncomplete'         : f'{year}ProvisionalRejIncomplete',
-                'E2gRejProvisionalBallotMissing'      : f'{year}ProvisionalRejBallotMissing',
-                'E2hRejProvisionalNoSig'              : f'{year}ProvisionalRejNoSig',
-                'E2iRejProvisionalSigNotMatching'     : f'{year}ProvisionalRejSigNotMatching',
-                'E2jRejAlreadyVoted'                  : f'{year}ProvisionalRejAlreadyVoted',
-                'E2kRejProvisionalOther1Txt'          : f'{year}ProvisionalRejOther1Txt',
-                'E2kRejProvisionalOther1Count'        : f'{year}ProvisionalRej1Count',
-                'E2lOtherRejProvisionalOther2Txt'     : f'{year}ProvisionalRejOther2Txt',
-                'E2lRejProvisionalOther2Count'        : f'{year}ProvisionalRejOther2Count',
-                'E2mRejProvisionalOther3Txt'          : f'{year}ProvisionalRejOther3Txt',
-                'E2nRejProvisionalOther3Count'        : f'{year}RejProvisionalOther3Count',
-                'F1aVoteCounted'                      : f'{year}TotalVoteCounted',
-                'F1bVotedPhysically'                  : f'{year}TotalVotedPhysically',
-                'F1cVotedAbroad'                      : f'{year}TotalVotedAbroad',
-                'F1dVoteByMail'                       : f'{year}TotalVoteByMail',
-                'F1eVoteProvisionalBallot'            : f'{year}TotalVoteProvisionalBallot',
-                'F1fVoteInPersonEarly'                : f'{year}TotalVoteInPersonEarly',
-                'F1gVoteByMailJurisdiction'           : f'{year}TotalVoteByMailOnlyJurisdiction',
-            }, axis=1)
+        df = sheet.rename(spreadsheet_maps[year], axis=1)
             
         # There can be stray columns where
         # all values are NaN (their names are
         # like 'Unnamed : 47'
-        df = df.loc[:,~(df.isna().all())]
+        df = df.fillna(0)
         
-        # Remove 'not applicables' and 'not availables' that
-        # are expressed as negative integers:
-        df = df.replace(to_replace=-888888, value=0)
-        df = df.replace(to_replace=-999999, value=0)
-        
-        df = df.replace(to_replace={-888888 : 0,
-                                    -999999 : 0,
-                                    -88     : 0,
-                                    'Does not apply' : 0,
-                                    'Data not available' : 0
-                                    })
-
+        # Despite efforts in to_int_if_possible(),
+        # must turn FIPS col into strings manually:
+        df['FIPSCodeDetailed'] = df['FIPSCodeDetailed'].astype(str)
 #         # Make 10-digit FIPSCode into str, b/c the leading
 #         # zeroes are confused with Octal:
 #         df = df.astype({f'FIPSCodeDetailed' : str})
@@ -546,6 +279,10 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         new_cols = head + [county_col_name] + tail
         df = df_new[new_cols]
         
+        # A very occasional NaN slips in here (One in 2018)
+        # Delete respective row(s):
+        df = df.dropna(axis=0) 
+        
         # Rename the FIPS col to conform to our norms:
         df = df.rename({county_col_name : f'{year}CountyFIPS'}, axis=1)
 
@@ -571,20 +308,95 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         
         # Several fields are incorrect in the original. Fix some of those:
         
-        self.set_at(df_final,'AZ', 'NAVAJO COUNTY',f'{year}ByMailCountByMailRejected',211)
-        self.set_at(df_final,'AZ', 'PINAL COUNTY',f'{year}ByMailCountByMailRejected',339)
-        self.set_at(df_final,'FL', 'SARASOTA COUNTY',f'{year}ByMailCountByMailRejected',380)
-        self.set_at(df_final,'FL', 'ST. LUCIE COUNTY',f'{year}ByMailCountByMailRejected',694)
-        self.set_at(df_final,'TX', 'DALLAM COUNTY',f'{year}ByMailCountByMailRejected',7)
-        self.set_at(df_final,'TX', 'LAMPASAS COUNTY',f'{year}ByMailCountByMailRejected',4 )
-        self.set_at(df_final,'TX', 'CASTRO COUNTY',f'{year}ByMailCountByMailRejected', 6)
-        self.set_at(df_final,'TX', 'CHILDRESS COUNTY',f'{year}ByMailCountByMailRejected',2 )
-        self.set_at(df_final,'TX', 'CULBERSON COUNTY',f'{year}ByMailCountByMailRejected',8)
-        self.set_at(df_final,'TX', 'HUNT COUNTY',f'{year}ByMailCountByMailRejected',42)
-        self.set_at(df_final,'TX', 'IRION COUNTY',f'{year}ByMailCountByMailRejected',1)
-        self.set_at(df_final,'TX', 'MARTIN COUNTY',f'{year}ByMailCountByMailRejected',1)
-        self.set_at(df_final,'TX', 'ROBERTS COUNTY',f'{year}ByMailCountByMailRejected',1)
-        self.set_at(df_final,'TX', 'STERLING COUNTY',f'{year}ByMailCountByMailRejected',5)
+#         self.set_at(df_final,'AZ', 'NAVAJO COUNTY',f'{year}ByMailCountByMailRejected',211)
+#         self.set_at(df_final,'AZ', 'PINAL COUNTY',f'{year}ByMailCountByMailRejected',339)
+#         self.set_at(df_final,'FL', 'SARASOTA COUNTY',f'{year}ByMailCountByMailRejected',380)
+#         self.set_at(df_final,'FL', 'ST. LUCIE COUNTY',f'{year}ByMailCountByMailRejected',694)
+#         self.set_at(df_final,'TX', 'DALLAM COUNTY',f'{year}ByMailCountByMailRejected',7)
+#         self.set_at(df_final,'TX', 'LAMPASAS COUNTY',f'{year}ByMailCountByMailRejected',4 )
+#         self.set_at(df_final,'TX', 'CASTRO COUNTY',f'{year}ByMailCountByMailRejected', 6)
+#         self.set_at(df_final,'TX', 'CHILDRESS COUNTY',f'{year}ByMailCountByMailRejected',2 )
+#         self.set_at(df_final,'TX', 'CULBERSON COUNTY',f'{year}ByMailCountByMailRejected',8)
+#         self.set_at(df_final,'TX', 'HUNT COUNTY',f'{year}ByMailCountByMailRejected',42)
+#         self.set_at(df_final,'TX', 'IRION COUNTY',f'{year}ByMailCountByMailRejected',1)
+#         self.set_at(df_final,'TX', 'MARTIN COUNTY',f'{year}ByMailCountByMailRejected',1)
+#         self.set_at(df_final,'TX', 'ROBERTS COUNTY',f'{year}ByMailCountByMailRejected',1)
+#         self.set_at(df_final,'TX', 'STERLING COUNTY',f'{year}ByMailCountByMailRejected',5)
+
+        # In 1130 rows the F1a total sum of votes cast
+        # by all the possible modalities is not the
+        # sum of F1b-F1g. Correct those rows:
+    
+        df_totals = df_final[[f'{year}TotalVotedPhysically',           
+                              f'{year}TotalVotedAbroad',               
+                              f'{year}TotalVoteByMail',                
+                              f'{year}TotalVoteProvisionalBallot',     
+                              f'{year}TotalVoteInPersonEarly',         
+                              f'{year}TotalVoteByMailOnlyJurisdiction',
+                              f'{year}TotalVoteOtherCount'
+                              ]]
+        sums_of_vote_modalities = df_totals.sum(axis=1, numeric_only=True)
+        num_bad_modalities = (sums_of_vote_modalities != df_final[f'{year}TotalVoteCounted']).sum()
+        self.log.info(f"Number of 'Sum of vote modalities != total vote' (sum(F1b-g) != F1a): {num_bad_modalities}")
+
+        df_final[f'{year}TotalVoteCounted'] = sums_of_vote_modalities
+        
+        # Same for reasons for provisional votes rejection: in some counties 
+        # the reasons don't add up to the total provisional rejections:
+        # Same for rejections of provisional ballots:
+        df_totals = df_final[[f'{year}ProvisionalRejProvisionalNotRegistered',
+                              f'{year}ProvisionalRejWrongJurisdiction',       
+                              f'{year}ProvisionalRejWrongPrecinct',           
+                              f'{year}ProvisionalRejNoID',                    
+                              f'{year}ProvisionalRejIncomplete',              
+                              f'{year}ProvisionalRejBallotMissing',           
+                              f'{year}ProvisionalRejNoSig',                   
+                              f'{year}ProvisionalRejSigNotMatching',          
+                              f'{year}ProvisionalRejAlreadyVoted',
+                              f'{year}ProvisionalRejOther1Txt',  
+                              f'{year}ProvisionalRej1Count',     
+                              f'{year}ProvisionalRejOther2Txt',  
+                              f'{year}ProvisionalRejOther2Count',
+                              f'{year}ProvisionalRejOther3Txt',  
+                              f'{year}RejProvisionalOther3Count'
+                              ]]
+                              
+        sums_prov_rej = df_totals.sum(axis=1, numeric_only=True)
+        num_bad_prov_rej = (sums_prov_rej != df_final[f'{year}ProvisionalRejCountTotal']).sum()
+        self.log.info(f"Number of 'Sum of rejected provisionals != total num of provisionals' (sum(E2b-j) != E2a): {num_bad_prov_rej}")
+        
+        df_final[f'{year}ProvisionalRejCountTotal'] = sums_prov_rej
+        
+        # Same for rejections of vote by mail:
+
+        df_totals = df_final[[f'{year}ByMailRejDeadline',
+                              f'{year}ByMailRejSignatureMissing',
+                              f'{year}ByMailRejWitnessSignature',
+                              f'{year}ByMailRejNonMatchingSig',
+                              f'{year}ByMailRejNoElectionOfficialSig',
+                              f'{year}ByMailRejUnofficialEnvelope',
+                              f'{year}ByMailRejBallotMissing',
+                              f'{year}ByMailRejEnvelopeNotSealed',
+                              f'{year}ByMailRejNoAddr',
+                              f'{year}ByMailRejMultipleBallots',
+                              f'{year}ByMailRejDeceased',
+                              f'{year}ByMailRejAlreadyVoted',
+                              f'{year}ByMailRejNoVoterId',
+                              f'{year}ByMailRejNoBallotApplication',
+                              f'{year}ByMailRejOtherReason1',
+                              f'{year}ByMailRejOtherReasonCount1',
+                              f'{year}ByMailRejOtherReason2',
+                              f'{year}ByMailRejOtherReason2Count',
+                              f'{year}ByMailRejOtherReason3',
+                              f'{year}ByMailRejOtherReason3Count'
+                              ]]
+
+        sums_mail_rej = df_totals.sum(axis=1, numeric_only=True)
+        num_bad_mail_rej = (sums_mail_rej != df_final[f'{year}ByMailCountByMailRejected']).sum()
+        self.log.info(f"Number of 'Sum of rejected mail-ins != total num of mail-ins' (sum(C4b-o) != C4a): {num_bad_mail_rej}")
+        
+        df_final[f'{year}ByMailCountByMailRejected'] = sums_mail_rej
+
 
         # Still bad:
         # (df_perc > 100).sum() > 0
@@ -598,8 +410,8 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
 
         
         # Fill in the percentage calculations in
-        # self.percentages for 2018:
-        self.compute_percentages_2018(df_final, year)
+        # self.percentages for 2018
+        self.percentages = self.compute_percentages_2018(df_final, year)
         
         return df_final
 
@@ -656,9 +468,11 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # string:
         sheet = pd.read_excel(io=survey_file,
                               header=[0],
-                              dtype={'FIPSCode' : str},
-                              converters=self.INT_CONVERSIONS[year]
-                              )
+                              dtype={'FIPSCode' : str})
+
+        # Turn numbers to ints, except for FIPS Code:
+        sheet = sheet.apply(to_int_if_possible, axis=0, result_type='broadcast')
+
         self.log.info(f"Done reading Election Administration and Voting Survey for {year}.")
         df = sheet.rename({
                            'FIPSCode'                                 : f'FIPSCodeDetailed',
@@ -774,9 +588,6 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # by replacing the ones that have fewer with the 
         # FIPS County codes followed by zeroes:
         
-        #self.ensure_10dig_key(df, countyFIPS) #****** Write this, and call
-        #                                      #       it from the others as well.
-
         # Make multiindex:
         mindx_df = df[['FIPSCodeDetailed','State','Jurisdiction']].rename({'FIPSCodeDetailed' : 'FIPSDetailed'}, axis=1)
         mindx_df['Election'] = [year]*len(df)
@@ -831,10 +642,13 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         year = 2014
         self.log.info(f"Reading Election Administration and Voting Survey for {year}...")
         sheet = pd.read_excel(io=survey_file,
-                              header=[0],
-                              converters=self.INT_CONVERSIONS[year]
-                              )        
+                              header=[0], dtype={'FIPSCode' : str})
+
         self.log.info(f"Done reading Election Administration and Voting Survey for {year}.")
+        
+        # Turn numbers to ints, except for FIPS Code:
+        sheet = sheet.apply(to_int_if_possible, axis=0, result_type='broadcast')
+
         # Sometimes a col 'PreferredOrder sneaks in:
         try:
             sheet = sheet.drop('PreferredOrder', axis=1)
@@ -907,18 +721,8 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         # There can be stray columns where
         # all values are NaN (their names are
         # like 'Unnamed : 47'
-        df = df.loc[:,~(df.isna().all())]
+        df = df.fillna(0)
         
-        # Remove 'not applicables' and 'not availables' that
-        # are expressed as negative integers:
-        
-        df = df.replace(to_replace={-888888 : 0,
-                                    -999999 : 0,
-                                    -88     : 0,
-                                    'Does not apply' : 0,
-                                    'Data not available' : 0
-                                    })
-
         # Remove Guam, Virgin Islands, AMERICAN SAMOA, Puerto Rico:
         df = df.drop(df[df['State'] == 'GU'].index)
         df = df.drop(df[df['State'] == 'VI'].index)
@@ -1012,6 +816,11 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
 
         df_perc = self.percentages
         df_perc[f'{year}CountyFIPS'] = df[f'{year}CountyFIPS']
+        
+        # VOTE BY MAIL
+
+        df_perc[f'{year}PercByMailTotal'] = \
+            self.avg_juris(df[f'{year}TotalVoteByMail'], df[f'{year}TotalVoteCounted'])
         
         # Percentage rejected:
         df_perc[f'{year}PercByMailRejTotal'] = \
@@ -1127,16 +936,15 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         df_perc[f'{year}PercVoteModusAbroad'] = \
             self.avg_juris(df[f'{year}TotalVotedAbroad'], df[f'{year}TotalVoteCounted'])
 
-        df_perc[f'{year}PercVoteModusByMail'] = \
-            self.avg_juris(df[f'{year}ByMailCountBallotsReturned'], df['2018TotalCountVotesCast'])
-
         df_perc[f'{year}PercVoteModusProvisionalBallot'] = \
             self.avg_juris(df[f'{year}TotalVoteProvisionalBallot'], df['2018TotalCountVotesCast'])
 
         df_perc[f'{year}PercVoteModusInPersonEarly'] = \
             self.avg_juris(df[f'{year}TotalVoteInPersonEarly'], df['2018TotalCountVotesCast'])
-        
-        self.percentages = df_perc
+
+        df_perc[f'{year}PercVoteModusPhysically'] = \
+            self.avg_juris(df[f'{year}TotalVotedPhysically'], df['2018TotalCountVotesCast'])
+
         return df_perc
 
     #------------------------------------
@@ -1171,13 +979,14 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         @param whole: the number that is 100%
         @type whole: numeric
         @return: percentage, averaged if needed
-        @rtype: [float]
+        @rtype: pd.Series
         '''
         
-        res = 100 * part.groupby(['State', 'Jurisdiction', 'Election']).mean()/whole
+        #res = 100 * part.groupby(['State', 'Jurisdiction', 'Election']).mean()/whole
+        res = 100 * part/whole
         res = res.where(~res.isna(),0)
         res = res.where(res != np.inf,0)
-        return res.values 
+        return res 
 
     #------------------------------------
     # join_surveys
@@ -1271,7 +1080,8 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         problems = \
            code_state_fips[code_state_fips.FIPSCodeDetailed.str.len() <=5][['FIPSCodeDetailed',
                                                                             'State',
-                                                                            'Jurisdiction']]
+                                                                            'Jurisdiction',
+                                                                            'StateFIPS']]
            
         # problems is now (1851 rows):
         #      FIPSCodeDetailed State                            Jurisdiction
@@ -1335,14 +1145,20 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         problems.Jurisdiction = problems.Jurisdiction.replace(repl_dict)
         
         # Combine all info via the Jurisdiction key:
-        solution = problems.merge(ref_stateFIPS_juris, on='Jurisdiction', how='left')
+        solution = problems.merge(ref_stateFIPS_juris, 
+                                  on=['Jurisdiction','StateFIPS'], 
+                                  how='left',
+                                  suffixes=['', '_y'])
         # Add State FIPS in front of the County triplet:
         solution.County = solution.StateFIPS.str.cat(solution.County)
 
+        # A very occasional county FIPS comes up NaN (one in 2018):
+        solution = solution.dropna()
+         
         # Enhance our emerging good table with the
         # now known County FIPS of the short entries:
         code_state_fips_all = code_state_fips.merge(solution,
-                                                    on='FIPSCodeDetailed',
+                                                    on=['FIPSCodeDetailed', 'StateFIPS'],
                                                     how='left',
                                                     suffixes=['_orig','_fixed']
                                                     ).drop_duplicates(subset='FIPSCodeDetailed')
@@ -1449,6 +1265,9 @@ if __name__ == '__main__':
 
     xformer = ElectionSurveyCleaner()
     dfs = {}
+    #*********
+    args.years = [2018]
+    #*********
     for year in args.years:
         dfs[year] = xformer.transform(year)
         

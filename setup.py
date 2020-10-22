@@ -19,6 +19,7 @@ setup(
                         'openpyxl>=3.0.5',       # Pandas Excel support
                         'category-encoders>=2.2.2', # leave-one-out encoding
                         'seaborn>=0.11.0',
+                        'dbf>=0.99.0'
                         ],
 
     #dependency_links = ['https://github.com/DmitryUlyanov/Multicore-TSNE/tarball/master#egg=package-1.0']

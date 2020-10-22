@@ -7,7 +7,6 @@ Created on Oct 1, 2020
 import unittest
 
 import pandas as pd
-import numpy as np
 
 from eavs_cleaning import ElectionSurveyCleaner
 
@@ -49,7 +48,7 @@ class MailVotingTest(unittest.TestCase):
     # test_2018
     #-------------------
 
-    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    #*******@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_2018(self):
         year = 2018
         xformer = ElectionSurveyCleaner()
@@ -71,9 +70,12 @@ class MailVotingTest(unittest.TestCase):
         # Spot check one percentage: the rejection rate
         # of Barbour County in Alabama:
         percentages = xformer.percentages
-        self.assertEqual(percentages.xs('AL', level='State')
-                            .xs('BARBOUR COUNTY', level='Jurisdiction')['2018PercByMailRejTotal'].item(),
-                            11.168831168831169)
+        self.assertEqual(round(percentages.xs('AL', level='State')
+                            .xs('BARBOUR COUNTY', level='Jurisdiction')['2018PercByMailRejTotal'].item(), 2),
+                         11.17)
+        
+        self.assertEqual(round(percentages.xs(['SULLY COUNTY', 'SD'], level=['Jurisdiction', 'State'])['2018PercByMailTotal'].item(),2),
+                         17.95)
 
     #------------------------------------
     # test_2016
@@ -126,7 +128,7 @@ class MailVotingTest(unittest.TestCase):
     # test_percentages_2018 
     #-------------------
     
-    #*****@unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
+    @unittest.skipIf(TEST_ALL != True, 'skipping temporarily')
     def test_percentages_2018(self):
         year = 2018
         xformer = ElectionSurveyCleaner()
@@ -137,13 +139,13 @@ class MailVotingTest(unittest.TestCase):
         
         sample_row = df.loc[('5603700000', 'WY', 'SWEETWATER COUNTY',year)]
         votes_counted = sample_row[f'{year}TotalVoteCounted']
-        votes_by_mail = sample_row[f'{year}ByMailCountBallotsReturned']
+        votes_by_mail = sample_row[f'{year}TotalVoteByMail']
         
         # The following comes to 16.201586
         perc_computed = 100 * votes_by_mail / votes_counted
         
         row = df_perc.xs('SWEETWATER COUNTY', level='Jurisdiction')
-        self.assertTrue(row[f'{year}PercVoteModusByMail'].item() == perc_computed)
+        self.assertTrue(row['2018PercByMailTotal'].item() == perc_computed)
         
         self.assertEqual(df.xs(['WY','WESTON COUNTY'],
                                level=['State','Jurisdiction'])['2018ByMailCountBallotsSent'].item(),
@@ -159,11 +161,21 @@ class MailVotingTest(unittest.TestCase):
         self.assertEqual(df.xs(['AL','BARBOUR COUNTY'],
                                level=['State','Jurisdiction'])['2018ByMailCountByMailRejected'].item(),
                                86)
-        
-        rej_perc = df_perc.xs(['AL','BARBOUR COUNTY'],
-                                    level=['State','Jurisdiction'])['2018PercByMailRejTotal'].item()
-        self.assertEqual(round(rej_perc, 1), 11.2)
-        
+
+        self.assertEqual(df.xs(['CT','SUFFIELD TOWN'],
+                               level=['State','Jurisdiction'])[f'{year}TotalVotedPhysically'].item(),
+                               5800)
+                         
+        self.assertEqual(df.xs(['AR','OUACHITA COUNTY'],
+                               level=['State','Jurisdiction'])[f'{year}TotalVoteProvisionalBallot'].item(),
+                               1)
+
+                         
+        self.assertEqual(round(df_perc.xs(['CT','SUFFIELD TOWN'],
+                                          level=['State','Jurisdiction'])[f'{year}PercVoteModusPhysically'].item(),
+                                          4),
+                                          92.7703)
+
         # No percentages must be over 100:
         prob_col = {}
         for perc_col in df_perc.columns:
