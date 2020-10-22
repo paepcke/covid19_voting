@@ -70,9 +70,12 @@ class MailVotingTest(unittest.TestCase):
         # Spot check one percentage: the rejection rate
         # of Barbour County in Alabama:
         percentages = xformer.percentages
-        self.assertEqual(percentages.xs('AL', level='State')
-                            .xs('BARBOUR COUNTY', level='Jurisdiction')['2018PercByMailRejTotal'].item(),
-                            11.168831168831169)
+        self.assertEqual(round(percentages.xs('AL', level='State')
+                            .xs('BARBOUR COUNTY', level='Jurisdiction')['2018PercByMailRejTotal'].item(), 2),
+                         11.17)
+        
+        self.assertEqual(round(percentages.xs(['SULLY COUNTY', 'SD'], level=['Jurisdiction', 'State'])['2018PercByMailTotal'].item(),2),
+                         17.95)
 
     #------------------------------------
     # test_2016
