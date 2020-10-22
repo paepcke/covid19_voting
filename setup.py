@@ -12,8 +12,6 @@ setup(
     packages = find_packages(),
 
     # Dependencies on other packages:
-    # Couldn't get numpy install to work without
-    # an out-of-band: sudo apt-get install python-dev
     setup_requires   = ['pytest-runner'],
     install_requires = ['scikit-learn>=0.23.2',
                         'pandas>=1.1.1',
