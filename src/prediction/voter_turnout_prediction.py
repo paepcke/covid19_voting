@@ -376,8 +376,35 @@ class StatePredictor(object):
             (pred_series_unique, 
              truth_series_unique) = self.predict_one_election(past_only_features, 
                                                               past_only_target) 
+          
+            
         
         self.evaluate_model(pred_series_unique, truth_series_unique)
+      
+    #------------------------------------
+    # run with k-fold cross validation
+    #------------------- 
+    
+    def kfold_run(self):
+        
+        # For a given election, we can only use
+            # feature values from the past, or from 
+            # measurements taken just before the election,
+            # like query counts. But not from the future:
+            
+            past_only_features = self.X_df.query(f"Election <= {election_yr}")
+            
+            # For Series, query() does not work. Use masks instead:
+            
+            mask = self.y_series.index.get_level_values('Election') <= election_yr
+            past_only_target   = self.y_series[mask]
+            
+            prediction_truth_list = self.predict_one_election_kfolds(past_only_features, 
+                                                              past_only_target)
+            for pair in prediction_truth_list:
+                
+
+        
         
     #------------------------------------
     # predict_one_election 
