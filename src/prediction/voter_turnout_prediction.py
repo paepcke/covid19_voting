@@ -372,9 +372,14 @@ class StatePredictor(object):
             
             mask = self.y_series.index.get_level_values('Election') <= election_yr
             past_only_target   = self.y_series[mask]
-
+            
+'''
             (pred_series_unique, 
              truth_series_unique) = self.predict_one_election(past_only_features, 
+                                                              past_only_target) 
+                                                              '''
+             (pred_series_unique, 
+             truth_series_unique) = self.predict_one_election_kfolds(past_only_features, 
                                                               past_only_target) 
           
             
@@ -384,24 +389,7 @@ class StatePredictor(object):
     #------------------------------------
     # run with k-fold cross validation
     #------------------- 
-    
-    def kfold_run(self):
-        
-        # For a given election, we can only use
-            # feature values from the past, or from 
-            # measurements taken just before the election,
-            # like query counts. But not from the future:
-            
-            past_only_features = self.X_df.query(f"Election <= {election_yr}")
-            
-            # For Series, query() does not work. Use masks instead:
-            
-            mask = self.y_series.index.get_level_values('Election') <= election_yr
-            past_only_target   = self.y_series[mask]
-            
-            prediction_truth_list = self.predict_one_election_kfolds(past_only_features, 
-                                                              past_only_target)
-            for pair in prediction_truth_list:
+
                 
 
         
@@ -511,7 +499,24 @@ class StatePredictor(object):
         kf = KFold(n_splits=5)
         KFold(n_splits=5, random_state=42, shuffle=False)
         
-        kfolds_pred_list = []
+        pred, truth = X_df, y_series
+        
+        rf_optimal_parms_path = os.path.join(self.script_dir, 'best_params.pickle')
+        try:
+            with open(rf_optimal_parms_path, 'rb') as fd:
+                best_params = pickle.load(fd)
+                # The '**' signals that best_params
+                # is a dict, and should be used as
+                # kwargs:
+                self.rand_forest.set_params(**best_params)
+        except FileNotFoundError:
+            # No previously stored parms
+            best_params = self.optimize_hyperparameters(self.X, self.y)
+            with open(rf_optimal_parms_path, 'wb') as fd:
+                # Save as a text format:
+                pickle.dump(best_params, fd, protocol=0)
+                
+                
         for train_idx, test_idx in kf.split(X):
             self.train_features_df = X_df[train_idx]
             self.test_features_df = X_df[test_idx]
@@ -543,9 +548,11 @@ class StatePredictor(object):
             gb_truth = self.test_labels_series.groupby(['Region', 'Election'])
             truth_series_unique = gb_truth.mean()
             
-            kfolds_pred_list.append((pred_series_unique, truth_series_unique))
-        return kfolds_pred_list
-
+            pred, truth = pred_series_unique, truth_series_unique
+        
+   
+                
+        return (pred, truth)
             
         
 
