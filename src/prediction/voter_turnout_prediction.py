@@ -425,6 +425,9 @@ class StatePredictor(object):
          self.test_features_df, 
          self.train_labels_series, 
          self.test_labels_series) = train_test_split(X_df, y_series, test_size=0.25, random_state=42)
+        
+        
+        
 
         # RandomForestClassifier/Regressor want
         # pure numpies:
@@ -472,7 +475,52 @@ class StatePredictor(object):
         gb_truth = self.test_labels_series.groupby(['Region', 'Election'])
         truth_series_unique = gb_truth.mean()
         return (pred_series_unique, truth_series_unique)
+    
+    #------------------------------------
+    # predict_one_election with k cross folds
+    #-------------------
+    def predict_one_election_kfolds(self, X_df, y_series):
+        #KFolds cross-validation
+        kf = KFold(n_splits=5)
+        KFold(n_splits=5, random_state=42, shuffle=False)
+        
+        kfolds_pred_list = []
+        for train_idx, test_idx in kf.split(X):
+            self.train_features_df = X_df[train_idx]
+            self.test_features_df = X_df[test_idx]
+            self.train_labels_series = y_series[train_idx]
+            self.test_labels_series = y_series[test_idx]
+            
+            self.X = self.train_features_df.reset_index(drop=True).to_numpy(dtype=float)
+            self.y = self.train_labels_series.reset_index(drop=True).to_numpy(dtype=float)
+            self.X_test = self.test_features_df.reset_index(drop=True).to_numpy(dtype=float)
+            self.y_test = self.test_labels_series.reset_index(drop=True).to_numpy(dtype=float)
+            
+            self.log.info("Training the regressor...")
+            self.rand_forest.fit(self.X, self.y)
+            self.log.info("Done training the regressor.")
+            predictions = self.rand_forest.predict(self.X_test)
+            
+            pred_series = pd.Series(predictions, name='VoterTurnout', 
+            index=self.test_labels_series.index)
+        
+        # There are multiple copies of the TurnoutRate
+        # for each (<State>,<year>) pair. Get the unique
+        # values by grouping by 'Region' and 'Election'.
+        # Each group will have identical VoterTurnout values.
+        # Get get just one, take the group means. Since values
+        # are identical within each group, no data are lost:
+        
+            gb_pred = pred_series.groupby(['Region', 'Election'])
+            pred_series_unique = gb_pred.mean()
+            gb_truth = self.test_labels_series.groupby(['Region', 'Election'])
+            truth_series_unique = gb_truth.mean()
+            
+            kfolds_pred_list.append((pred_series_unique, truth_series_unique))
+        return kfolds_pred_list
 
+            
+        
 
     #------------------------------------
     # optimize_hyperparameters 
