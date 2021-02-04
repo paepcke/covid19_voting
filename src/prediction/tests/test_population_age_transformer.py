@@ -46,9 +46,9 @@ class TestPopulationAgeTransformer(unittest.TestCase):
         #***state_abbrevs.loc[0] = pd.Series(['United States', 2008], index=('US', 2008))
         state_abbrevs.index = zip(state_abbrevs['Abbrev'], [2008]*len(state_abbrevs['Abbrev']))
         state_abbrevs = state_abbrevs.drop('Abbrev', axis=1)
-        state_abbrevs.insert(1,'Year',[2008]*len(state_abbrevs['State']))
-        us_row = pd.DataFrame({'State': ['United States'],
-                               'Year' : [2008]
+        state_abbrevs.insert(1,'Election',[2008]*len(state_abbrevs['Region']))
+        us_row = pd.DataFrame({'Region': ['United States'],
+                               'Election' : [2008]
                                }, index=[('US', 2008)]
                                )
 

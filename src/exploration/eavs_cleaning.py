@@ -13,13 +13,11 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 import numpy as np
 import pandas as pd
-from utils.logging_service import LoggingService
-
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-
+from utils.logging_service import LoggingService
 
 def catch_non_int(value):
     try:
@@ -627,17 +625,6 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         
         df_final[f'{year}ProvisionalRejCountTotal'] = sums_prov_rej
 
-        # Still bad:
-        # (df_perc > 100).sum() > 0
-        # 2018PercByMailRejDeadline                  True
-        # 2018PercByMailRejAlreadyVoted              True
-        # 2018PercByProvRejNotRegistered             True
-        # 2018PercByProvRejWrongJurisdiction         True
-        # 2018PercByProvRejIncomplete                True
-        # 2018PercVoteModusByMail                    True
-        # 2018PercVoteModusInPersonEarly             True
-
-        
         # Fill in the percentage calculations in
         # self.percentages for 2018
         self.percentages = self.compute_percentages_2018(df_final, year)
@@ -1188,11 +1175,12 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
     def avg_juris(self, part, whole):
         '''
         Returns percentage of part in the whole.
-        Both args are pd.Series. Used for survey
+        Both args are pd.Series. Used for percentages
+        across all rows of a df. Also used for survey
         responses, where multiple reporting 
         jurisdictions can be contained within one
         County FIPS code. Example (note the identidcal
-        state/county: 50 005; Vermont, County 005):
+        state/county: the leading 50 005; Vermont, County 005):
         
                                                           SomeResponse
             5000562200    VT     SAINT JOHNSBURY  2018        309
@@ -1205,7 +1193,9 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         county.
         
         When whole is 0, returns 0. Same if either
-        part or whole are NaN.
+        part or whole are NaN. For results > 100,
+        a warning is logged, and the respective row
+        is excluded from the result.
         
         @param part: number for which percentage is
             to be computed.
@@ -1216,11 +1206,36 @@ class ElectionSurveyCleaner(BaseEstimator, TransformerMixin):
         @rtype: pd.Series
         '''
         
-        #res = 100 * part.groupby(['State', 'Jurisdiction', 'Election']).mean()/whole
-        res = 100 * part/whole
+        #********
+        res = 100 * part.groupby(['State', 'Jurisdiction', 'Election']).mean()/whole
+        #********res = 100 * part/whole
+        #********
         res = res.where(~res.isna(),0)
         res = res.where(res != np.inf,0)
-        return res 
+        # Warn about cases where whole < part.
+        # Those would lead to percentages > 100.
+        # We log those cases, and filter them out:
+        if len(res[res > 100.00]) > 0:
+            msg = "Percentage > 100.00 (dropped)" +\
+                  f"{res[res > 100.00]}"
+            self.log.warn(msg)
+        
+        res = res[res <= 100.00]
+        # The groupby changed the order of the
+        # multiindex from:
+        #    FIPSDetailed, State, Jurisdiction, Election
+        # to
+        #    State, Jurisdiction, Election, FIPSDetailed
+        #
+        # Use pd.Series.swaplevel() to bubble FIPSDetailed
+        # back to the front. Need to do that so assignments
+        # to columns will work for the caller:
+        
+        res1 = res.swaplevel('Election', 'FIPSDetailed')
+        res2 = res1.swaplevel('Jurisdiction', 'FIPSDetailed')
+        res3 = res2.swaplevel('State', 'FIPSDetailed')
+
+        return res3 
 
     #------------------------------------
     # join_surveys

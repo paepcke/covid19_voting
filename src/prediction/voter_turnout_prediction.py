@@ -144,7 +144,7 @@ class StatePredictor(object):
 
     MAIL_VOTING =          {
                             2018: os.path.join(os.path.dirname(__file__),
-                                               '../../voteByMail2018.xlsx')
+                                               '../../voteByMail2018.xlsx'),
                             2016: os.path.join(os.path.dirname(__file__),
                                                '../../voteByMail2016.xls'),
                             2014: os.path.join(os.path.dirname(__file__),
