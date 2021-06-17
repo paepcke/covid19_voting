@@ -6,6 +6,7 @@ Created on Sep 4, 2020
 
 import os, sys
 import pickle
+import argparse
 
 from category_encoders.binary import BinaryEncoder
 from category_encoders.leave_one_out import LeaveOneOutEncoder
@@ -16,20 +17,24 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import make_scorer
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import GridSearchCV
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 
 import numpy as np
 import pandas as pd
-from population_age_transformer import PopulationAgeTransformer
-from prediction.covid_utils import CovidUtils
-from utils.logging_service import LoggingService
-from visualization import Visualizer
+from matplotlib import pyplot as plt
+from prediction.population_age_transformer import PopulationAgeTransformer
 
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from prediction.covid_utils import CovidUtils
+from utils.logging_service import LoggingService
+from prediction.visualization import Visualizer
 
+
+
+print(sys.path)
 
 
 
@@ -149,9 +154,15 @@ class StatePredictor(object):
                                                '../../voteByMail2016.xls'),
                             2014: os.path.join(os.path.dirname(__file__),
                                                '../../voteByMail2014.xls'),
+            
+                            
                             2012: os.path.join(os.path.dirname(__file__),
                                                '../../voteByMail2012.xlsx'),
                            }
+
+    PRESIDENTIAL_YRS = list(range(2000, 2032, 4))
+    MIDTERM_YRS      = list(range(2002, 2032, 4))
+
 
     RANDOM_SEED = 42
 
@@ -218,6 +229,8 @@ class StatePredictor(object):
         self.log.info("Adding age distribution by State...")
         election_features = PopulationAgeTransformer(self.AGE_BY_STATE).fit_transform(election_features)
         self.log.info("Done adding age distribution by State.")
+        
+
 
         # Remove columns not needed, and encode 
         # categorical columns:
@@ -268,7 +281,15 @@ class StatePredictor(object):
         self.target_name   = label_col
         self.X_df          = X.copy()
         self.y_series      = y.copy()
-        
+
+        # self.X_df = self.X_df.drop(['TotalIneligibleFelons', 'VEP_White', 'VEP_Black',
+        # 'VEP_Hispanic','NonCitizenPerc', 'Overseas Eligible.1', 'MeanPastTurnout', 'Year',
+        # 'State Abv.1', 'State Abv.2', 'State Abv.3', 'State Abv.4',
+        # 'State Abv.5', 'State Abv.6', 'State Abv.7', 'State Abv.8',
+        # 'State Abv.9', 'State Abv.10', 'VEP_Other', 'Week', 'WeekDay',
+        # 'DayCount', 'Disaster', 'Age_19_25', 'Age_26_34', 'Age_35_54',
+        # 'Age_55_64', 'Age_65_up'], axis=1)
+
         # Make the final feature vectors (incl. label_col)
         # available to other methods:
         self.election_features = election_features
@@ -290,32 +311,295 @@ class StatePredictor(object):
 
         self.log.info("Done creating RandomForestRegressor.")
 
+
     #------------------------------------
     # run
     #-------------------
 
-    def run(self):
-        
+
+    def run_for_2018(self):
+        election_yr = 2018
+        past_only_features = self.X_df.query(f"Election <= {election_yr}")
+
+        # For Series, query() does not work. Use masks instead:
+        mask = self.y_series.index.get_level_values('Election') <= election_yr
+        past_only_target = self.y_series[mask]
+
+
+        rmse_values, important_feat = self.predict_one_election_kfolds(past_only_features, 
+                                                                       past_only_target)
+        #(pred_series_unique,truth_series_unique) = self.predict_one_election(past_only_features,past_only_target)
+
+        rmse = []
+        for (pred, truth) in rmse_values:
+            rmse.append(self.evaluate_model(pred, truth))
+        print(rmse)
+
+        x = self.X_df.dropna(axis=1)
+        fig = plt.figure(figsize=(10, 5))
+        plt.barh(x.columns, important_feat)
+        plt.xlabel("Predictive Power")
+        plt.ylabel("Prediction Features")
+        plt.title("Prediction Power Analysis")
+        plt.show()
+
+    #------------------------------------
+    # run but for year "n", training the rf regressor only on years < "n"
+    #-------------------
+
+    def run_for_each_year(self):
+        rmse_dict = {}
+        all_preds_truths = pd.DataFrame()
         for election_yr in self.election_years:
             
             # For a given election, we can only use
-            # feature values from the past, or from 
+            # feature values from the past, or from
             # measurements taken just before the election,
-            # like query counts. But not from the future:
+            # like query counts. But not from the future.
+            # Also, we only use data from prior comparable
+            # elections: presidential, vs. midterm. Filter
+            # out non-used feature values:
             
-            past_only_features = self.X_df.query(f"Election <= {election_yr}")
+            past_only_features, past_only_targets = self.select_analysis_subset(election_yr)
             
-            # For Series, query() does not work. Use masks instead:
+            arr, important_features = self.predict_one_election_kfolds(past_only_features, 
+                                                                       past_only_targets)
             
-            mask = self.y_series.index.get_level_values('Election') <= election_yr
-            past_only_target   = self.y_series[mask]
+            # Create dict of RMSE for each year:
+            rmse = []
+            for (pred, truth) in arr:
+                rmse.append(self.evaluate_model(pred, truth))
+            rmse_dict[election_yr] = rmse
+            
+            # Average the folds' predictions across each state
+            # for this year. First, get an array of predictions,
+            # which are Pandas Series instances:
+            individual_fold_preds = [fold_pred 
+                                     for fold_pred, _fold_truth 
+                                     in arr]
+            # Turn into a df...
+            individual_folds_df = pd.DataFrame(individual_fold_preds)
 
-            (pred_series_unique, 
-             truth_series_unique) = self.predict_one_election(past_only_features, 
-                                                              past_only_target) 
+            # ... to get:
+            #     Region              AK        AL        AR  ...        WI        WV        WY
+            #     Election          2008      2008      2008  ...      2008      2008      2008
+            #     VoterTurnout  0.675383  0.613730  0.581768  ...  0.710649  0.500845  0.648931
+            #     VoterTurnout  0.675671  0.613925  0.580797  ...  0.711043  0.500244  0.648789
+            #     VoterTurnout  0.675979  0.613418  0.582007  ...  0.712046  0.501680  0.648958
+            #     VoterTurnout  0.675842  0.613946  0.580895  ...  0.710836  0.500202  0.648520
+            #     VoterTurnout  0.676114  0.613934  0.581508  ...  0.710779  0.502091  0.648360
+            # ... which has one for for each fold.
+
+            # Aggregate by averaging the predictions across 
+            # folds, i.e. down-table: 
+            all_preds_all_yrs_series = individual_folds_df.mean(axis=0)
+            
+            # That gave us:
+            
+            #    Region  Election
+            #    AK      2010        0.527586
+            #            2014        0.527586
+            #            2018        0.560361
+            #    AL      2010        0.351101
+            #            ...
+            
+            # Pick just the preds for election_yr:
+            
+            all_preds_this_yr_series = all_preds_all_yrs_series.xs(election_yr, 
+                                                                   level='Election', 
+                                                                   drop_level=False)
+            
+            
+            # We now have a pd.Series of predictions:
+            #     Region  Election
+            #     AK      2008        0.675798
+            #     AL      2008        0.613790
+            #     AR      2008        0.581395
+            #     AZ      2008        0.581395
+            #     CA      2008        0.613790
+            #     CO      2008        0.711071
+            #             ...
+            
+            # Goal: a df with pred as one col, and truth as the second. 
+            # But: currently the truth (self.y_series has many duplicates 
+            # that were added to match the height of self.X_df:
+            #
+            #     self.y_series.index.unique()
+                    # MultiIndex([('AK', 2008),  <---- many identical values under this:
+                                # ('AK', 2010),
+                                # ('AK', 2012),
+                                # ('AK', 2014),
+                                # ('AK', 2016),
+                                # ('AK', 2018),
+                                # ('AL', 2008),
+                                # ('AL', 2010),
+                                # ('AL', 2012),
+            # We remove the dups by averaging the identical
+            # values in a GROUP-BY:
+            grouped = self.y_series.groupby(by=['Region', 'Election'])
+            truth_state_all_yrs = grouped.mean()
+            
+            # Now have in truth_state_all_yrs:
+            # grouped.mean()
+            # Region  Election
+            # AK      2008        0.683000
+            #   	  2010        0.529000
+            #   	  2012        0.589000
+            #   	  2014        0.548000
+            #   	  2016        0.614662
+            #          ...   
+            # WY      2010        0.460000
+            #   	  2012        0.590000
+            #   	  2014        0.397000
+            #   	  2016        0.602279
+            #   	  2018        0.478610
+            # Name: VoterTurnout, Length: 312, dtype: float64
+
+            # Get truth turnout for each State for
+            # just this year:
+            all_truths_this_yr_series = truth_state_all_yrs.xs(election_yr, 
+                                                               level='Election', 
+                                                               drop_level=False)
+            
+            # Put preds and truths side by side into a
+            # df like:
+            #     Region Election                          
+            #     AK     2008         0.675914        0.683
+            #     AL     2008         0.613564        0.610
+            #     AR     2008         0.580795        0.529
+            #     AZ     2008         0.580795        0.574
+            
+            col_dict = {'PredTurnout' : all_preds_this_yr_series,
+                        'TrueTurnout' : all_truths_this_yr_series}
+            all_preds_truths_this_yr = pd.DataFrame(col_dict)
+            
+            # Append this year's preds/truth values 
+            # to the all-years df:
+            all_preds_truths = pd.concat([all_preds_truths,all_preds_truths_this_yr])
+
+        # Examine RMSE:
+        fold_avg_RMSE = [(year, np.mean(RMSE))
+                         for year, RMSE
+                         in rmse_dict.items()
+                         ]
+        print(f"RMSE values: {fold_avg_RMSE}")
+        Visualizer().display_rmse(rmse_dict)
+
+        # Examine predictive power of features:
+        x = self.X_df.dropna(axis=1)
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.barh(x.columns, important_features)
+        ax.set_xlabel("Predictive Power")
+        ax.set_ylabel("Prediction Features")
+        ax.set_title("Feature Prediction Power Analysis")
+        fig.show(block=False)
+
+        # Examine prediction accuracy by State/election/disaster:
+        # Add disaster column to 
+        #*********
+        print('foo')
+        #*********
+
+    # ------------------------------------
+    # run Random Forest for both midterm and presidential separately
+    # -------------------
+
+    def run_pres_mid(self):
+        presidential_features, midterm_features, \
+        presidential_labels, midterm_labels = self.presidential_midterm_features(self.X_df, self.y_series)
+
+        arr_pres, important_features_pres = self.predict_one_election_kfolds(presidential_features, presidential_labels)
+        arr_mid, important_features_mid = self.predict_one_election_kfolds(midterm_features, midterm_labels)
+
+        rmse_pres = []
+        rmse_mid = []
+        for (pred, truth) in arr_pres:
+            rmse_pres.append(self.evaluate_model(pred, truth))
+
+        for (pred, truth) in arr_mid:
+            rmse_mid.append(self.evaluate_model(pred, truth))
+
+
+        print("RMSE for presidential years:", rmse_pres)
+        print("RMSE for midterm years:", rmse_mid)
+
+        x = self.X_df.dropna(axis=1)
+        plt.subplot(2, 1, 1)
+        pop = plt.barh(x.columns, important_features_pres)
+        plt.ylabel('Presidential Election')
+        plt.subplot(2, 1, 2)
+        gdp = plt.barh(x.columns, important_features_mid)
+        plt.ylabel('Midterm Elections')
+        plt.show()
+
+    #------------------------------------
+    # select_analysis_subset 
+    #-------------------
+    
+    def select_analysis_subset(self, election_yr):
+        '''
+        Given an election year, return a copy of the
+        full feature matrix and a corresponding subset of
+        the truth values (voter turnout).
         
-        self.evaluate_model(pred_series_unique, truth_series_unique)
+        Select rows from the full data matrix of voter data
+        in all States and all elections that:
+             
+             a. are from election of election_yr, or earlier
+             b. are of the same type (presidential vs. midterm)
         
+        :param election_yr: one of the election years for
+            which data are available
+        :type election_yr: int
+        :return: a copy of self.X_df with all rows eliminated
+            that contain data from elections beyond the election
+            year, and from elections of a different type.
+        :rtype: (pd.DataFrame, pd.Series
+        '''
+        
+        if election_yr in self.PRESIDENTIAL_YRS:
+         
+            # For Series, query() does not work. Use masks instead:
+            elect_yrs = self.y_series.index.get_level_values('Election')
+            mask = (elect_yrs == election_yr) | \
+                   (elect_yrs < election_yr) & np.in1d(elect_yrs, self.PRESIDENTIAL_YRS)
+            past_only_features = self.X_df[mask]
+            past_only_target = self.y_series[mask]
+        else:
+            # Examining a MIDTERM year:
+            elect_yrs = self.y_series.index.get_level_values('Election')
+            mask = (elect_yrs == election_yr) | \
+                   (elect_yrs < election_yr) & np.in1d(elect_yrs, self.MIDTERM_YRS)
+            past_only_features = self.X_df[mask]
+            past_only_target = self.y_series[mask]
+
+        # The number of rows picked from the feature df
+        # must match the number of corresponding truths:
+        assert(len(past_only_target) == len(past_only_features))
+        
+        return past_only_features, past_only_target
+
+
+    #------------------------------------
+    # extract and separate presidential and midterm features
+    #-------------------
+
+    def presidential_midterm_features(self, X_df, y_series):
+        pres_feat_2016 = self.X_df.query("Election == 2016")
+        pres_feat_2012 = self.X_df.query("Election == 2012")
+        pres_feat_2008 = self.X_df.query("Election == 2008")
+
+        mid_feat_2018 = self.X_df.query("Election == 2018")
+        mid_feat_2014 = self.X_df.query("Election == 2014")
+        mid_feat_2010 = self.X_df.query("Election == 2010")
+
+        presidential_features = pd.concat([pres_feat_2008,pres_feat_2012,pres_feat_2016], ignore_index=True)
+        midterm_features = pd.concat([mid_feat_2018,mid_feat_2014,mid_feat_2010], ignore_index=True)
+
+        presidential_labels = y_series[np.in1d(y_series.index.get_level_values(1), [2008, 2012, 2016])]
+        midterm_labels = y_series[np.in1d(y_series.index.get_level_values(1), [2010, 2014, 2018])]
+
+        return presidential_features, midterm_features, presidential_labels, midterm_labels
     #------------------------------------
     # predict_one_election 
     #-------------------
@@ -358,9 +642,9 @@ class StatePredictor(object):
         '''
 
         # Split the data into training and testing sets
-        (self.train_features_df, 
-         self.test_features_df, 
-         self.train_labels_series, 
+        (self.train_features_df,
+         self.test_features_df,
+         self.train_labels_series,
          self.test_labels_series) = train_test_split(X_df, y_series, test_size=0.25, random_state=42)
 
         # RandomForestClassifier/Regressor want
@@ -369,7 +653,7 @@ class StatePredictor(object):
         self.X = self.train_features_df.reset_index(drop=True).to_numpy(dtype=float)
         self.y = self.train_labels_series.reset_index(drop=True).to_numpy(dtype=float)
         self.X_test = self.test_features_df.reset_index(drop=True).to_numpy(dtype=float)
-        self.y_test = self.test_labels_series.reset_index(drop=True).to_numpy(dtype=float)
+        #self.y_test = self.test_labels_series.reset_index(drop=True).to_numpy(dtype=float)
 
         # Do we have optimal parameters from previous run?
         
@@ -388,10 +672,13 @@ class StatePredictor(object):
                 # Save as a text format:
                 pickle.dump(best_params, fd, protocol=0)
 
-        self.log.info("Training the regressor...")
-        self.rand_forest.fit(self.X, self.y)
-        self.log.info("Done training the regressor.")
-        predictions = self.rand_forest.predict(self.X_test)
+        self.log.info("Building forest of trees from training set...")
+        X =  self.X[:,~np.all(np.isnan(self.X), axis=0)]
+        self.rand_forest.fit(X, self.y)
+        self.log.info("Done building forest of trees.")
+        X_test=self.X_test[:,~np.all(np.isnan(self.X_test), axis=0)]
+
+        predictions = self.rand_forest.predict(X_test)
 
         # Turn predictions back into a Series:
         pred_series = pd.Series(predictions, name='VoterTurnout', 
@@ -410,6 +697,165 @@ class StatePredictor(object):
         truth_series_unique = gb_truth.mean()
         return (pred_series_unique, truth_series_unique)
 
+    #------------------------------------
+    # predict_one_election -with kfolds
+    #-------------------
+
+    def predict_one_election_kfolds(self, X_df, y_series):
+        '''
+        Takes df with values for each prediction feature,
+        and true voter turnout predictions. Returns:
+        
+             o A 5-element array of 2-tuples of prediction/truth.
+               Each array element is the result of one 
+               of 5 splits
+             o Feature importance
+             
+        X_df usually has feaures (colums):
+           ['Year', 'NonCitizenPerc', 'TotalIneligibleFelons', 
+            'MeanPastTurnout', 'VEP_White', 'VEP_Black', 
+            'VEP_Hispanic', 'VEP_Other', 'Week',
+            'WeekDay', 'DayCount', 'Disaster', 
+            'Age_19_25', 'Age_26_34', 'Age_35_54', 
+            'Age_55_64', 'Age_65_up', 'Query_0', 'Query_1', 'Query_2']
+
+        The content of X_df is like:
+                             Year  NonCitizenPerc  ...  Query_1  Query_2
+            Region Election                        ...                  
+            AK     2008      2008           0.037  ...        0        1
+                   2008      2008           0.037  ...        0        1
+                            ...
+            WY     2012      2012           0.025  ...        1        0
+                   2012      2012           0.025  ...        1        0
+
+        The content of y_series is like:
+        
+            Region  Election
+            AK      2008        0.683
+                    2008        0.683
+                    2008        0.683
+                    2008        0.683
+                    2008        0.683
+                                ...  
+            WY      2012        0.590
+                    2012        0.590
+                    2012        0.590
+                    2012        0.590
+                    2012        0.590
+            Name: VoterTurnout, Length: 10920, dtype: float64
+            
+        I.e. the values are repeated; this method takes
+        account of this fact.
+        
+        The array return value is like:
+        
+            fold1 (State1: prediction, truth,
+                   State2: prediction, truth,
+                      ...
+                   )
+            fold2 (State1: prediction, truth,
+                   State2: prediction, truth,
+                      ...
+                   )
+        
+        So: pred_arr[0][0] retrieves fold0's
+            predictions:
+        
+            Region  Election
+            AK      2008        0.675578
+            AL      2008        0.614046
+            AR      2008        0.580488
+                     ...
+        
+        While pred_arr[0][1] retrieves fold0's
+            truths:
+            
+            Region  Election
+            AK      2008        0.683
+            AL      2008        0.610
+            AR      2008        0.529
+
+    Should be changed so that this method averages prediction
+    results over the 5 folds. 
+             
+        :param X_df: input feature values for each State and election year
+        :type X_df: pd.DataFrame
+        :param y_series: true voter turnout for each State and election year
+        :type y_series: pd.Series
+        :return: 
+        '''
+        # KFolds cross-validation
+        kf = KFold(n_splits=5, shuffle=True)
+        KFold(n_splits=5)
+
+        pred, truth = X_df, y_series
+
+        rf_optimal_parms_path = os.path.join(self.script_dir, 'best_params.pickle')
+        try:
+            with open(rf_optimal_parms_path, 'rb') as fd:
+                best_params = pickle.load(fd)
+                # The '**' signals that best_params
+                # is a dict, and should be used as
+                # kwargs:
+                self.rand_forest.set_params(**best_params)
+        except FileNotFoundError:
+            # No previously stored parms
+            best_params = self.optimize_hyperparameters(self.X, self.y)
+            with open(rf_optimal_parms_path, 'wb') as fd:
+                # Save as a text format:
+                pickle.dump(best_params, fd, protocol=0)
+
+        pred_arr = []
+        for train_idx, test_idx in kf.split(X_df):
+
+            train_features_df = X_df.iloc[train_idx]
+            #************
+            try:
+                train_labels_series = y_series.iloc[train_idx]
+            except IndexError as e:
+                raise
+            #************            
+            test_features_df = X_df.iloc[test_idx]
+            test_labels_series = y_series.iloc[test_idx]
+
+            X = train_features_df.reset_index(drop=True).to_numpy(dtype=float)
+            y = train_labels_series.reset_index(drop=True).to_numpy(dtype=float)
+            X_test = test_features_df.reset_index(drop=True).to_numpy(dtype=float)
+            #y_test = test_labels_series.reset_index(drop=True).to_numpy(dtype=float)
+
+            X = X[:, ~np.all(np.isnan(X), axis=0)]
+            self.log.info("Training the regressor...")
+            self.rand_forest.fit(X, y)
+            self.log.info("Done training the regressor.")
+
+            important_features = self.rand_forest.feature_importances_
+
+
+
+            X_test = X_test[:, ~np.all(np.isnan(X_test), axis=0)]
+            predictions = self.rand_forest.predict(X_test)
+
+            pred_series = pd.Series(predictions, name='VoterTurnout',
+                                    index=test_labels_series.index)
+
+            # There are multiple copies of the TurnoutRate
+            # for each (<State>,<year>) pair. Get the unique
+            # values by grouping by 'Region' and 'Election'.
+            # Each group will have identical VoterTurnout values.
+            # Get get just one, take the group means. Since values
+            # are identical within each group, no data are lost:
+
+            gb_pred = pred_series.groupby(['Region', 'Election'])
+            pred_series_unique = gb_pred.mean()
+            gb_truth = test_labels_series.groupby(['Region', 'Election'])
+            truth_series_unique = gb_truth.mean()
+
+            pred, truth = pred_series_unique, truth_series_unique
+            pred_arr.append((pred,truth))
+
+
+
+        return pred_arr, important_features
 
     #------------------------------------
     # optimize_hyperparameters 
@@ -431,9 +877,9 @@ class StatePredictor(object):
         '''
         
         tuned_parameters = {#****'n_estimators' : 1+np.array(range(10)),
+                            'max_depth': 1 + np.array(range(3)),
                             'n_estimators' : 1+np.array(range(10)),
                             #****'max_depth'    : 1+np.array(range(10))
-                            'max_depth'    : 1+np.array(range(3))
                             }
         scorer = make_scorer(mean_squared_error, greater_is_better=False)
         clf = GridSearchCV(
@@ -444,6 +890,7 @@ class StatePredictor(object):
             n_jobs=10,
             verbose=1
             )
+        train_X = train_X[:,~np.all(np.isnan(train_X), axis=0)]
         clf.fit(train_X, 
                 train_y
                 )
@@ -459,7 +906,7 @@ class StatePredictor(object):
                                     key=lambda name_imp_pair: name_imp_pair[1],
                                     reverse=True
                                     )
-        self.log.info(f'Feature importances: \n{sorted_importances}')
+        self.log.info('Feature importances: \n{sorted_importances}')
         
         #print(f'Best params: {clf.best_params_}')
         #print(f'Best score: {clf.best_score_}')
@@ -482,16 +929,16 @@ class StatePredictor(object):
         # Baseline model the mean of voter turnout:
         baseline_preds    = test_labels.mean()
         baseline_errors   = abs(baseline_preds - test_labels)
-        mean_baseline_err = round(np.mean(baseline_errors), 2)
+        #mean_baseline_err = round(np.mean(baseline_errors), 2)
 
-        self.log.info(f"Baseline mean abs err: {100*mean_baseline_err} percentage points.")
+        self.log.info("Baseline mean abs err: {100*mean_baseline_err} percentage points.")
 
-        rmse = round(mean_squared_error(test_labels,
+        rmse = (mean_squared_error(test_labels,
                                         predictions,
                                         squared=False
-                                        ),2)
+                                        ))
         
-        self.log.info(f'RMSE against across all states: {rmse}')
+        self.log.info('RMSE against across all states: {rmse}')
         
         # Get RMSE between voter turnout prediction and truth
         # from predicting voter turnout for the elections within
@@ -505,12 +952,90 @@ class StatePredictor(object):
         #*****viz.feature_importance(self.rand_forest, self.feature_names)
         # Visualize panel of states, each chart
         # showing a truth vs. prediction scatterplot:
-        
-        viz.real_and_estimated(predictions, 
-                               test_labels,
-                               rmse_values)
 
 
+        #viz.real_and_estimated(predictions,test_labels,rmse_values)
+        return rmse
+
+
+    def rmse_statewise(self, predicted, truth):
+        '''
+        Given two series of voter turnouts by state,
+        return RMSE for each state. Expected for
+        each of the two series:
+
+             Region Election
+             AK     2008          0.661664
+                    2010          0.524586
+                    2012          0.524586
+                    2014          0.429512
+                    2016          0.615751
+                    2018          0.534943
+             ...                       ...
+             WY     2010          0.501196
+                    2012          0.501196
+                    2014          0.406122
+                    2016          0.595712
+                    2018          0.514905
+
+        where the column is VoterTurnout (predicted or true)
+
+        For each State separately the RMSE between
+        prediction and truth is computed. Returns a
+        Series like:
+
+            Region
+            AK    0.056036
+            AL    0.057293
+            AR    0.074859
+            AZ    0.050861
+
+        @param predicted: predicted voter turnout per State per election
+        @type predicted: pd.Series
+        @param truth: actual voter turnout per State per election
+        @type truth: pd.Series
+        @return RMSE between prediction and truth within each State
+        '''
+        # # Get:
+        #                       VoterTurnout  VoterTurnout
+        #      Region Election
+        #      AK     2008          0.661664      0.683000
+        #             2010          0.524586      0.529000
+        #             2012          0.524586      0.589000
+        #             2014          0.429512      0.548000
+        #             2016          0.615751      0.614662
+        #             2018          0.534943      0.548186
+        #      ...                       ...           ...
+        #      WY     2010          0.501196      0.460000
+        #             2012          0.501196      0.590000
+        #             2014          0.406122      0.397000
+        #             2016          0.595712      0.602279
+        #             2018          0.514905      0.478610
+
+        combo_pred_truth = pd.concat([predicted, truth], axis=1)
+        combo_pred_truth.columns = ['TurnoutPred', 'TurnoutTruth']
+
+        # Function to apply when given a dataframe like the
+        # combo above, but with only the data of one State
+        # at a time:
+        def rmse_by_state(pred_truth_one_state_df):
+            rmse = mean_squared_error(pred_truth_one_state_df['TurnoutPred'],
+                                      pred_truth_one_state_df['TurnoutTruth'],
+                                      squared=False
+                                      )
+            return rmse
+
+        grp = combo_pred_truth.groupby(by=['Region'])
+
+        # Get:
+        #     Region
+        #     AK    0.056036
+        #     AL    0.057293
+        #     AR    0.074859
+        #          ...
+
+        rmse_df = grp.apply(rmse_by_state)
+        return rmse_df
     #------------------------------------
     # import_search_data 
     #-------------------
@@ -746,7 +1271,7 @@ class StatePredictor(object):
             # merged header columns. The solution comes from: 
             # https://stackoverflow.com/questions/42132663/fix-dataframe-columns-when-reading-an-excel-file-with-a-header-with-merged-cells
     
-            df = df.reset_index()
+
 
             # Turn multiindex level names that Pandas brought in
             # as 'Unnamed: ...' to emtpy strings:
@@ -756,7 +1281,7 @@ class StatePredictor(object):
             # 'Denominators', 'VEP Components (Modifications to VAP to Calculate VEP) 
             # We only want the flat col header of level 1:
             df.columns = df.columns.droplevel(0)
-            
+
             # Some files have two extra columns: 'State Results Website',
             # 'Status', 'Source', and/or 'State Abv. Others don't.
             # Remove those cols if present:
@@ -781,9 +1306,14 @@ class StatePredictor(object):
             # Overseas Eligible Voters are only available
             # for the entire US; at State level the col is
             # all nan:
-            
+
             df = df.drop('Overseas Eligible', axis=1)
-            
+            df = df.rename(columns = {'':'state'})
+
+
+
+            df = df.reset_index()
+
             # Some of the Election Project sheets have 
             # Notes and such after Wyoming. Remove those:
             
@@ -794,7 +1324,7 @@ class StatePredictor(object):
             # The 2018 table from Election Project is missing
             # the VAP Highest Office column. Get those numbers
             # via the Census:
-            
+
             if year == 2018:
 
                 vap_highest_office = self.compute_2018_VAPHighestOffice()
@@ -805,32 +1335,62 @@ class StatePredictor(object):
             
             # 15 columns (each of which corresponds to a level in
             # the multiindex:
+
+
+            df = df.rename(columns={df.columns[0]: 'index',
+                                    df.columns[1]: 'State',
+                                    df.columns[2]: 'VoterTurnout',
+                                    df.columns[3]: 'VEPHighestOffice',
+                                    df.columns[4]: 'VAPHighestOffice',
+                                    df.columns[5]: 'TotalBallotsCounted',
+                                    df.columns[6]: 'HighestOffice',
+                                    df.columns[7]: 'VotingEligiblePopulation',
+                                    df.columns[8]: 'VotingAgePopulation',
+                                    df.columns[9]: 'NonCitizenPerc',
+                                    df.columns[10]: 'Prison',
+                                    df.columns[11]: 'Probation',
+                                    df.columns[12]: 'Parole',
+                                    df.columns[13]: 'TotalIneligibleFelons'})
+            '''
+            df = df.rename(columns={'index': 'index', 'state': 'State', 'VEP Total Ballots Counted': 'VoterTurnout',
+                                    'VEP Highest Office': 'VEPHighestOffice',
+                                    'VAP Highest Office': 'VAPHighestOffice',
+                                    'Total Ballots Counted': 'TotalBallotsCounted', 'Highest Office': 'HighestOffice',
+                                    'Voting-Eligible Population (VEP)': 'VotingEligiblePopulation',
+                                    'Voting-Age Population (VAP)': 'VotingAgePopulation',
+                                    '% Non-citizen': 'NonCitizenPerc', 'Prison': 'Prison', 'Probation': 'Probation',
+                                    'Parole': 'Parole',
+                                    'Total Ineligible Felon': 'TotalIneligibleFelons'})
+            
+            
+            print(df.columns)
             try:
-                df.columns = ['index_dup', 'State', 'VoterTurnout', 'VEPHighestOffice',
+                df.columns = ['index','State', 'VoterTurnout', 'VEPHighestOffice',
                        'VAPHighestOffice', 'TotalBallotsCounted', 'HighestOffice', 'VotingEligiblePopulation',
                        'VotingAgePopulation',
                        'NonCitizenPerc',
                        'Prison',
                        'Probation',
                        'Parole',
-                       'TotalIneligibleFelons',
+                       'TotalIneligibleFelons'
                        ]
+            
             except Exception as e:
                 # Without this try/except, program
                 # just dies if mismatch in num of 
                 # cols in df vs. the above list:
                 raise e
-    
+            '''
             # Add a year col just after the State:
             df.insert(2,'Year',[year]*len(df)) 
             
             # Remove the index_dup col:
-            df = df.drop(columns='index_dup')
+            df = df.drop(columns='index')
 
             # We use 'VEP Total Ballots Counted' for voter participation. 
             # But some States don't report this number. Their value will 
             # be NaN. In that case we use the 'VEP Highest Office' percentage:
-            
+
             df['VoterTurnout'] = df['VoterTurnout'].fillna(df['VEPHighestOffice'])
             
             # Same with 'Total Ballots Counted':
@@ -850,7 +1410,7 @@ class StatePredictor(object):
                 num_elections = 1
             else:
                 voter_turnout_df = voter_turnout_df.append(df.copy())
-                voter_turnout_df['MeanPastTurnout']  = sum_prev_turnouts / num_elections 
+                voter_turnout_df['MeanPastTurnout'] = sum_prev_turnouts / num_elections
                 sum_prev_turnouts = sum_prev_turnouts + df.VoterTurnout
                 num_elections += 1
 
@@ -921,6 +1481,7 @@ class StatePredictor(object):
         # header. The result will feature a multiindex:
         df = pd.read_excel(excel_src, 
                            sheet_name='Race and Ethnicity',
+                           skiprows = 1,
                            header=[0])
         # We now have:
         #    Census Weight for Vote Overreport Bias Correction\n  ...  Unnamed: 17
@@ -943,7 +1504,7 @@ class StatePredictor(object):
         df.columns = ['PopSegment'] + list(range(2018,1984,-2))
         
         # Drop left-over header line:
-        df = df.drop(0)
+        #df = df.droplevel(0)
         
         # Giving us:
         #              PopSegment       2018       2016  ...      1990      1988      1986
@@ -978,7 +1539,7 @@ class StatePredictor(object):
         # df's index is now non-standard, starting 
         # with 1. Fix that:
         df = df.reset_index()
-        
+        ''
         # Disambiguate population segment names: 
         new_popsegment_names = pd.Series([
         'TurnoutNonHispWhite',
@@ -1260,88 +1821,6 @@ class StatePredictor(object):
 
         return df
 
-    #------------------------------------
-    # rmse_statewise
-    #-------------------
-    
-    def rmse_statewise(self, predicted, truth):
-        '''
-        Given two series of voter turnouts by state,
-        return RMSE for each state. Expected for
-        each of the two series:
-
-             Region Election              
-             AK     2008          0.661664
-                    2010          0.524586
-                    2012          0.524586
-                    2014          0.429512
-                    2016          0.615751
-                    2018          0.534943
-             ...                       ...
-             WY     2010          0.501196
-                    2012          0.501196
-                    2014          0.406122
-                    2016          0.595712
-                    2018          0.514905
-                    
-        where the column is VoterTurnout (predicted or true)
-        
-        For each State separately the RMSE between 
-        prediction and truth is computed. Returns a 
-        Series like:
-        
-            Region
-            AK    0.056036
-            AL    0.057293
-            AR    0.074859
-            AZ    0.050861
-            
-        @param predicted: predicted voter turnout per State per election
-        @type predicted: pd.Series
-        @param truth: actual voter turnout per State per election
-        @type truth: pd.Series
-        @return RMSE between prediction and truth within each State
-        '''
-        # # Get:
-        #                       VoterTurnout  VoterTurnout
-        #      Region Election                            
-        #      AK     2008          0.661664      0.683000
-        #             2010          0.524586      0.529000
-        #             2012          0.524586      0.589000
-        #             2014          0.429512      0.548000
-        #             2016          0.615751      0.614662
-        #             2018          0.534943      0.548186
-        #      ...                       ...           ...
-        #      WY     2010          0.501196      0.460000
-        #             2012          0.501196      0.590000
-        #             2014          0.406122      0.397000
-        #             2016          0.595712      0.602279
-        #             2018          0.514905      0.478610
-
-        combo_pred_truth = pd.concat([predicted,truth], axis=1)
-        combo_pred_truth.columns = ['TurnoutPred', 'TurnoutTruth']
-
-        # Function to apply when given a dataframe like the 
-        # combo above, but with only the data of one State
-        # at a time:
-        def rmse_by_state(pred_truth_one_state_df):
-            rmse = mean_squared_error(pred_truth_one_state_df['TurnoutPred'],
-                                      pred_truth_one_state_df['TurnoutTruth'],
-                                      squared=False
-                                      )
-            return rmse
-
-        grp = combo_pred_truth.groupby(by=['Region'])
-        
-        # Get:
-        #     Region
-        #     AK    0.056036
-        #     AL    0.057293
-        #     AR    0.074859
-        #          ...
-
-        rmse_df = grp.apply(rmse_by_state)
-        return rmse_df
 
     #------------------------------------
     # target_encode
@@ -1544,9 +2023,8 @@ class StatePredictor(object):
         # Compute the nationwide mean:
         us_mean = voting_rate_VAP.mean()
         voting_rate_VAP = pd.concat([pd.Series(us_mean, index=['US']),voting_rate_VAP])
-        
-        return voting_rate_VAP
 
+        return voting_rate_VAP
 
 # ------------------------ Main ------------
 if __name__ == '__main__':
@@ -1564,5 +2042,25 @@ if __name__ == '__main__':
 # 
 #     args = parser.parse_args();
 
-    StatePredictor().run()
+
+    parser = argparse.ArgumentParser(description="Execute RandomForest for Voting-related statistics")
+    parser.add_argument('-a', action='store_true')
+    parser.add_argument('-b', action='store_true')
+    parser.add_argument('-c', action='store_true')
+    args = parser.parse_args()
+    # StatePredictor().run_pres_mid()
+    
+    #args.a = True
+    args.b = True
+
+    if args.a:
+        StatePredictor().run_for_2018()
+    elif args.b:
+        StatePredictor().run_for_each_year()
+    elif args.c:
+        StatePredictor().run_pres_mid()
+    else:
+        raise argparse.ArgumentError("Specify a Flag")
+    
     input("Press ENTER to quit...")
+

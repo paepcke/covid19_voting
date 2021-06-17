@@ -8,9 +8,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import random
 
 import matplotlib.patches as mpatches
+
 from utils.logging_service import LoggingService
+from statistics import mean
 
 class Visualizer(object):
     '''
@@ -26,11 +29,52 @@ class Visualizer(object):
         Constructor
         '''
         self.log = LoggingService()
-    
+
+
+    #------------------------------------
+    # display_rmse 
+    #-------------------
+
+    def display_rmse(self, rmse_dict):
+        '''
+        Input: 
+            {<election-year> : [<fold1-RMSE>, ... <fold5-RMSE>]}
+            
+        Displays a bar chart of RMSE's by election year
+        
+        :param rmse_dict:
+        :type rmse_dict:
+        '''
+        presidential_years = list(range(2000, 2032, 4))
+        for rmse in rmse_dict.keys():
+            rmse_dict[rmse] = mean(rmse_dict[rmse])
+
+        keys = list(rmse_dict.keys())
+        values = list(rmse_dict.values())
+        
+        # A caption for the fig below would read: 
+        #    Voter turnout predictions are computed from election data of 
+        #    all prior years to 2004 of the same election type (midterm/presidential)
+
+        fig, ax = plt.subplots(figsize =(10, 5))
+        bars = ax.bar(keys, values)
+        for bar in bars:
+            # The 'bar.get_x() returns the bar
+            # midpoint, such as 2007.6, turn into
+            # an int after rounding up:
+            bar_year = int(np.ceil(bar.get_x()))
+            bar.set_linewidth(3)
+            if bar_year in presidential_years:
+                bar.set_edgecolor('red')
+        ax.set_xlabel('Election Year')
+        ax.set_ylabel('Root Mean Square Error')
+        ax.set_title('Error Residuals by Election Year')
+        fig.show(block=False)
+
     #------------------------------------
     # feature_importance 
     #-------------------
-    
+
     def feature_importance(self, forest, feature_names):
 
         importances = forest.feature_importances_
@@ -190,7 +234,11 @@ class Visualizer(object):
 
         self.log.info("Done creating 13x4 scatter plots for model performance per State and election.")
         self.log.info("Drawing scatter plots...")
-        plt.show()
+        #plt.show()
+
+        num = random.randint(1,1000)
+        file = "/Users/sidu/PycharmProjects/covid_voting/"+str(num)
+        plt.savefig(file)
         self.log.info("Done drawing scatter plots.")
 
 
