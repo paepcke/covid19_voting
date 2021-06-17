@@ -12,8 +12,6 @@ setup(
     packages = find_packages(),
 
     # Dependencies on other packages:
-    # Couldn't get numpy install to work without
-    # an out-of-band: sudo apt-get install python-dev
     setup_requires   = ['pytest-runner'],
     install_requires = ['scikit-learn>=0.23.2',
                         'pandas>=1.1.1',
@@ -21,6 +19,8 @@ setup(
                         'openpyxl>=3.0.5',       # Pandas Excel support
                         'category-encoders>=2.2.2', # leave-one-out encoding
                         'seaborn>=0.11.0',
+                        'dbf>=0.99.0',
+                        'category-encoders>=2.2.2',
                         ],
 
     #dependency_links = ['https://github.com/DmitryUlyanov/Multicore-TSNE/tarball/master#egg=package-1.0']
